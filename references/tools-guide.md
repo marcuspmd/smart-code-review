@@ -222,3 +222,46 @@ review:
 ```
 
 When `test_command` is set, the skill runs it automatically on reviews that touch tested code. When a test fails, it is included as a `P1` finding.
+
+## MCP Post-Review Actions
+
+When `tools.mcps` is configured, the skill can perform post-review actions using MCP tools after producing the review report.
+
+### Supported Actions
+
+| Action type | Trigger | MCP tool pattern |
+|---|---|---|
+| `create_issue` | P0 findings + user confirmation | `mcp__<server>__create_issue` |
+| `create_ticket` | P0 findings + user confirmation | `mcp__<server>__create_ticket` |
+| `add_pr_comment` | After review output + user confirmation | `mcp__<server>__add_pr_comment` |
+
+### MCP Tool Name Resolution
+
+Tool names follow the `mcp__<server>__<action>` convention. Common examples:
+
+| Server | create issue | PR comment |
+|---|---|---|
+| GitHub | `mcp__github__create_issue` | `mcp__github__add_pr_comment` |
+| Jira | `mcp__jira__create_issue` | — |
+| Linear | `mcp__linear__create_issue` | — |
+
+If a tool name fails, try the `mcp__<server>__<server>_<action>` variant — some servers prefix the tool name with the server name.
+
+### Config
+
+```yaml
+review:
+  tools:
+    mcps:
+      - server: github
+        use_for: [create_issue, add_pr_comment]
+        auto_post: false   # true = post without confirmation (default: false)
+      - server: jira
+        use_for: [create_ticket]
+        auto_post: false
+```
+
+**`auto_post: false`** (default): the skill asks before executing any MCP action.  
+**`auto_post: true`**: executes immediately after the review without prompting.
+
+MCP failures are non-blocking — the review report is always the primary deliverable.

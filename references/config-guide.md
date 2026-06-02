@@ -4,13 +4,19 @@ Create `.ai/review.yml` to configure the code review workflow per project.
 
 ## Config Discovery Order
 
-The skill looks for config in this order (first match wins):
+The skill looks for config in this order:
 
-1. `.ai/review.yml`
-2. `.ai/review.yaml`
+1. `~/.ai/review.yml` — global defaults (applied first; project config overrides)
+2. `.ai/review.yml` — project-level config
+3. `.ai/review.yaml` — project-level config (fallback)
 
+When both global and project configs exist, they are merged. **Merge rules:**
+- Scalar values (`language`, `test_command`, `auto_update`, etc.): project wins
+- List values (`priorities`, `always_check`, `ignore.paths`, `custom_rules`, `extra_bash`, `extra_skills`): additive — global items first, then project items, deduplicated
+- `tools.mcps`: additive; if same `server` appears in both, project entry takes precedence
+- `tools.static_analysis`: additive, deduplicated
 
-If none is found, the review proceeds with stack auto-detection and default lenses.
+If neither global nor project config is found, the review proceeds with stack auto-detection and default lenses.
 
 ## Minimal Config
 
@@ -73,12 +79,67 @@ review:
     # Go:     go vet | staticcheck
     # Python: mypy | ruff
 
+    # ── Extra Bash Commands (optional) ───────────────────────────────────────
+    # Additional bash command patterns to allow during the review.
+    # Useful when installed globally and the project uses non-default tools.
+    extra_bash:
+      - "docker:*"
+      - "kubectl:*"
+
+    # ── MCP Post-Review Actions (optional) ───────────────────────────────────
+    # Configure which MCP servers to use for post-review actions.
+    # server:    MCP server name as registered in Claude Code (/mcp list)
+    # use_for:   create_issue | create_ticket | add_pr_comment
+    # auto_post: if true, post without confirmation (default: false)
+    mcps:
+      - server: github
+        use_for:
+          - create_issue
+          - add_pr_comment
+        auto_post: false
+      - server: jira
+        use_for:
+          - create_ticket
+        auto_post: false
+
+    # ── Extra Skills (optional) ───────────────────────────────────────────────
+    # Explicit paths to SKILL.md files to incorporate as lens sources.
+    # These are read (not invoked) to enrich specialist passes.
+    extra_skills:
+      - ~/.claude/skills/security-deep-scan/SKILL.md
+
   # ── Custom Rules ──────────────────────────────────────────────────────────
   custom_rules:
     - "Authorization checks must come before any data mutation."
     - "Never call external HTTP services inside a database transaction."
     - "All public API endpoints must have at least one integration test."
 ```
+
+## Global Config (`~/.ai/review.yml`)
+
+Create `~/.ai/review.yml` to set defaults that apply across all projects. This is especially useful when the skill is installed globally and individual projects don't have a local config.
+
+Common uses:
+- Configure MCP servers once instead of per-project
+- Specify always-available tools (`extra_bash`)
+- Point to personal skill libraries (`extra_skills`)
+
+```yaml
+review:
+  tools:
+    extra_bash:
+      - "docker:*"
+      - "kubectl:*"
+    mcps:
+      - server: github
+        use_for: [create_issue, add_pr_comment]
+      - server: jira
+        use_for: [create_ticket]
+    extra_skills:
+      - ~/.claude/skills/security-deep-scan/SKILL.md
+```
+
+Project `.ai/review.yml` always takes precedence over global values. See [Config Discovery Order](#config-discovery-order) for merge rules.
 
 ## Custom Rules Best Practices
 

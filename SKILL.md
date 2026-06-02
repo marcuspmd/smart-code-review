@@ -1,8 +1,8 @@
 ---
 name: smart-code-review
 description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review my open changes", "review this PR", "review against develop", "review against main", "review the last N commits", "check my diff", "run code review", "review before merge".
-allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*)"
-version: "1.2.0"
+allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*),mcp__*"
+version: "1.3.0"
 ---
 
 # Code Review Agent
@@ -35,6 +35,7 @@ Responds in the user's language unless repository conventions require otherwise.
 **Required**: Git repository with staged, committed, or branch-level changes.
 
 **Optional configuration files**:
+- `~/.ai/review.yml` — global defaults (merged with project config; project wins on conflict)
 - `.ai/review.yml` or `.codex/review.yml` — review config (lenses, tools, priorities, ignore rules, custom rules)
 - `.ai/review-memory.md` — persistent review memory (recurring issues, accepted patterns, false positives)
 
@@ -44,11 +45,16 @@ See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
 ### Step 1: Load Project Context
 
-1. Load config (guaranteed — prints content or reports missing):
+1. Load config — merges global (`~/.ai/review.yml`) with project (`.ai/review.yml`) and prints the result:
 
 ```bash
-bash {baseDir}/scripts/load-config.sh
+bash {baseDir}/scripts/load-config.sh --global ~/.ai/review.yml
 ```
+
+When both configs exist, the output contains two labeled sections (`# --- GLOBAL CONFIG ---` and `# --- PROJECT CONFIG ---`). Apply these merge rules:
+- Scalar values (`language`, `test_command`, `auto_update`, etc.): project wins
+- List values (`priorities`, `always_check`, `ignore.paths`, `custom_rules`, `extra_bash`, `extra_skills`): additive — global items first, then project items, deduplicated
+- `tools.mcps`: additive; if same `server` in both, project entry takes precedence
 
 2. Load memory (guaranteed — prints content or reports missing):
 
@@ -58,6 +64,13 @@ bash {baseDir}/scripts/read-memory.sh
 
 3. Read `AGENTS.md` files if present.
 4. Skim `docs/architecture.md`, `docs/conventions.md`, `README.md`, or ADRs when visible.
+5. Discover peer skills — look for other installed skills that may enrich the review:
+
+```bash
+bash {baseDir}/scripts/discover-skills.sh
+```
+
+For each skill found: read its SKILL.md to extract lens definitions, checklists, or rule sets relevant to the current review surface. Incorporate those items as additional checklist entries in the relevant Step 5 specialist passes. **Do not invoke the skill** — only read its file content. If no skills are found, skip silently.
 
 ### Step 2: Identify the Review Surface
 
@@ -99,6 +112,10 @@ Do not review unstaged changes alongside staged ones unless the user explicitly 
 - Detect language, framework, storage layer, test framework, runtime, and deploy surface.
 - Classify changed files by role: controller, service, entity, migration, SQL, test, Docker, CI, config, docs.
 - Map each file class to the most relevant lenses.
+- Check the resolved config for:
+  - `tools.extra_bash` — note additional analysis tools available for Step 4 (e.g., `docker:*`, `kubectl:*`)
+  - `tools.mcps` — note which post-review MCP actions are configured for Step 7b
+  - `tools.extra_skills` — read each path as an additional lens source (same treatment as discovered skills in Step 1)
 
 ### Step 4: Run Tools When Useful
 
@@ -165,6 +182,28 @@ Key rules:
 - End with a `APPROVE / REQUEST_CHANGES / COMMENT` recommendation.
 - Propose memory entries for recurring patterns found — do not write them automatically unless `auto_update: true`.
 
+### Step 7b: Post-Review MCP Actions
+
+If the resolved config contains `tools.mcps`, offer the configured post-review actions after the review report is complete.
+
+**Only execute an MCP action when all three conditions are met:**
+1. The config has a `tools.mcps` entry for the server.
+2. The `use_for` list includes the action type.
+3. The user confirms — or `auto_post: true` is set on that entry.
+
+**P0 findings → create issue/ticket** (if `create_issue` or `create_ticket` is in `use_for`):
+- Offer to create one issue/ticket per P0 finding.
+- Title: the finding title. Body: file+line, one-sentence risk, concrete fix.
+- MCP tool name pattern: `mcp__<server>__create_issue` or `mcp__<server>__create_ticket`
+
+**PR comment** (if `add_pr_comment` is in `use_for`):
+- Offer to post the full review output as a PR comment.
+- MCP tool name pattern: `mcp__<server>__add_pr_comment`
+
+**Graceful degradation**: if an MCP tool call fails or the server is unavailable, append a note to the output and continue. The review report is always the primary deliverable — never abort or re-run the review due to MCP failures.
+
+See `{baseDir}/references/tools-guide.md` for MCP tool name resolution and config examples.
+
 ## Memory Handling
 
 ### Reading memory
@@ -216,6 +255,15 @@ See `{baseDir}/references/memory-guide.md` for section reference and quality gui
 
 6. **Error**: Tool not available (e.g., phpstan not installed).
    **Solution**: Skip that tool; note the gap; suggest installing it.
+
+7. **Error**: Global config not found at `~/.ai/review.yml`.
+   **Solution**: Review proceeds using only project config. Create `~/.ai/review.yml` to set cross-project defaults for tools, MCPs, and extra skills.
+
+8. **Error**: MCP tool call fails or server is not available.
+   **Solution**: Skip the MCP action; append a note to the review output. The review report is complete without post-review actions.
+
+9. **Error**: Discovered skill has no readable SKILL.md or no lens definitions.
+   **Solution**: Skip that skill silently.
 
 ## Examples
 
@@ -281,6 +329,16 @@ bash {baseDir}/scripts/detect-surface.sh --staged
 2. Create `.ai/review.yml` with the PHP/Laravel preset.
 3. Confirm the config and explain each section.
 
+### Example 8: Review With MCP Issue Creation
+
+**User**: "Review this PR and create GitHub issues for P0 findings"
+
+1. Load config (global + project merged via `load-config.sh --global ~/.ai/review.yml`).
+2. Detect surface with `detect-surface.sh --pr`.
+3. Run specialist passes and reflection (Steps 4–6).
+4. Format and deliver the review report (Step 7).
+5. For each P0 finding, offer to call `mcp__github__create_issue` with title, file+line, risk, and fix. Confirm before posting unless `auto_post: true`.
+
 ## Resources
 
 - **Output format + examples**: `{baseDir}/references/output-format.md`
@@ -293,6 +351,7 @@ bash {baseDir}/scripts/detect-surface.sh --staged
 
 ## Version History
 
+- **v1.3.0** (2026-06-02): Global config (`~/.ai/review.yml`), MCP post-review actions (Step 7b), peer skill discovery (Step 1), `extra_bash`/`mcps`/`extra_skills` config fields
 - **v1.2.0** (2026-06-02): Surface detection modes (auto, branch, PR, commits, staged)
 - **v1.1.0** (2026-06-02): Specialist passes (Security, A11y), Reflection/Critic step, structured output format
 - **v1.0.0** (2026-06-02): Initial release
