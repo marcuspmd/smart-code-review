@@ -1,4 +1,4 @@
-# code-review-agent
+# smart-code-review
 
 Context-aware AI code review with persistent memory, configurable rules, specialist lenses, and automated tool integration.
 
@@ -8,10 +8,10 @@ Works with: **PHP/Laravel**, **TypeScript/NestJS**, **Rust**, **Go**, **Python**
 
 ```bash
 # Project-level (only available in this repo)
-npx skills add marcuspmd/code-review-agent
+npx skills add marcuspmd/smart-code-review
 
 # Global (available in every project)
-npx skills add marcuspmd/code-review-agent -g
+npx skills add marcuspmd/smart-code-review -g
 ```
 
 ---
