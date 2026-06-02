@@ -29,14 +29,19 @@ See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
 ### Step 1: Load Project Context
 
-1. Run the config loader — this guarantees the config is found and printed before analysis:
+1. Load config (guaranteed — prints content or reports missing):
 
 ```bash
 bash {baseDir}/scripts/load-config.sh
 ```
 
-2. Read `AGENTS.md` files if present.
-3. Read memory at `.ai/review-memory.md` or the path returned by `review.memory.file` in the config.
+2. Load memory (guaranteed — prints content or reports missing):
+
+```bash
+bash {baseDir}/scripts/read-memory.sh
+```
+
+3. Read `AGENTS.md` files if present.
 4. Skim `docs/architecture.md`, `docs/conventions.md`, `README.md`, or ADRs when visible.
 
 ### Step 2: Identify the Review Surface
@@ -108,12 +113,35 @@ After findings, include open questions only when they affect the result. If no f
 
 ## Memory Handling
 
-- Read memory before reviewing when it exists.
-- Raise sensitivity to recurring project issues, accepted decisions, and known false positives.
-- Do not write memory during external PR reviews unless the user asks or `review.memory.auto_update: true` is set.
-- Propose a memory entry when a review reveals a useful recurring lesson.
+### Reading memory
 
-See `{baseDir}/references/memory-guide.md` for memory format and management.
+Always run this at the start of every review — it prints the memory file (or reports that none exists):
+
+```bash
+bash {baseDir}/scripts/read-memory.sh
+```
+
+### Writing memory
+
+After a review, when a useful recurring lesson is found, write it with:
+
+```bash
+# Valid sections: Architecture | Recurring Issues | Accepted Patterns | False Positives | Custom Rules
+bash {baseDir}/scripts/write-memory.sh --section "Recurring Issues" --entry "Reports prone to N+1 queries in analytics module"
+bash {baseDir}/scripts/write-memory.sh --section "Architecture" --entry "DDD: Domain/ must not import from Infrastructure/"
+bash {baseDir}/scripts/write-memory.sh --section "False Positives" --entry "PHPStan flags mixed types in generated DTOs — acceptable"
+bash {baseDir}/scripts/write-memory.sh --section "Accepted Patterns" --entry "Migrations split into schema + backfill steps for zero-downtime"
+```
+
+The script creates `.ai/review-memory.md` (and the `.ai/` directory) if they don't exist yet.
+
+### Write policy
+
+- Do **not** write memory during external PR reviews unless the user asks or `review.memory.auto_update: true` is set.
+- Propose the entry first ("I can save this to memory — want me to?") when auto_update is false.
+- When auto_update is true, write immediately after the review without asking.
+
+See `{baseDir}/references/memory-guide.md` for section reference and quality guidelines.
 
 ## Error Handling
 
