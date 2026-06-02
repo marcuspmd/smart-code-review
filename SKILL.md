@@ -15,6 +15,21 @@ This skill runs a structured code review by loading project context (config, mem
 
 Responds in the user's language unless repository conventions require otherwise.
 
+## How to Invoke
+
+**Natural language** — the skill activates automatically from these phrases:
+
+| What the user says | Review surface used |
+|---|---|
+| "review my changes" / "review my open changes" | Auto: staged → unstaged → branch ahead → last commit |
+| "review against develop" / "review against main" | Branch diff: current branch vs named target |
+| "review this PR" / "review before merging" | PR mode: branch vs auto-detected base |
+| "review the last 3 commits" | Last N commits on current branch |
+| "review what I staged" | Staged changes only |
+| "review and run tests" / "review and run linters" | Auto surface + tool execution |
+
+**Slash command**: `/code-review-agent`
+
 ## Prerequisites
 
 **Required**: Git repository with staged, committed, or branch-level changes.

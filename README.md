@@ -2,51 +2,89 @@
 
 Context-aware AI code review with persistent memory, configurable rules, specialist lenses, and automated tool integration.
 
-## What It Does
-
-Runs a structured code review by loading project context, identifying the diff surface, applying focused specialist lenses, running tests and linters when useful, and producing prioritized findings (P0–P3).
-
 Works with: **PHP/Laravel**, **TypeScript/NestJS**, **Rust**, **Go**, **Python**, **Docker**, **CI**, **SQL migrations**, and more.
 
 ## Install
 
 ```bash
-npx skills add marcusmazzon/code-review-agent
+# Project-level (only available in this repo)
+npx skills add marcuspmd/code-review-agent
+
+# Global (available in every project)
+npx skills add marcuspmd/code-review-agent -g
 ```
+
+---
 
 ## Usage
 
-Invoke automatically or explicitly:
+### Natural language (auto-activates)
+
+Just describe what you want — the skill activates automatically:
+
+```
+review my changes
+review my open changes
+review this PR
+review before merging
+review against develop
+review against main
+review the last 3 commits
+review what I staged
+run code review and tests
+```
+
+### Slash command (explicit)
 
 ```
 /code-review-agent
-/code-review-agent review feature/auth-refactor
-/code-review-agent review and run tests
 ```
 
-Or just describe what you want — the skill activates when you mention reviewing PRs, diffs, branches, or changes.
+---
 
-## Features
+## Review Modes
 
-### Specialist Lenses
+The skill detects which surface to review based on your request:
 
-Every review applies focused lenses matched to the changed files:
-
-| Lens | What It Checks |
+| What you say | What gets reviewed |
 |---|---|
-| **Correctness** | Broken contracts, edge cases, error handling, state transitions |
-| **Security** | AuthZ/AuthN, injection, XSS, SSRF, secrets, path traversal |
-| **Data** | Transaction scope, migrations, indexes, constraints, rollback paths |
-| **Performance** | N+1 queries, unbounded loops, memory pressure, caching |
-| **Architecture** | Layering, DDD boundaries, dependency direction |
-| **Tests** | Missing tests, brittle assertions, coverage gaps |
-| **Operations** | Docker, CI, env vars, observability, deploy sequencing |
+| `review my changes` | Auto: staged → unstaged → branch ahead of base → last commit |
+| `review against develop` | Diff of current branch vs `develop` |
+| `review against main` | Diff of current branch vs `main` |
+| `review this PR` / `review before merging` | Branch vs auto-detected base (main/master/develop) |
+| `review the last 3 commits` | Last 3 commits on current branch |
+| `review what I staged` | Staged changes only |
 
-### Project Configuration
+---
 
-Create `.ai/review.yml` to tune the review for your project:
+## What Happens During a Review
+
+1. **Loads config** from `.ai/review.yml` (if present)
+2. **Loads memory** from `.ai/review-memory.md` (if present)
+3. **Detects the surface** — which diff to review
+4. **Runs tools** — tests and linters if configured or requested
+5. **Applies specialist passes** independently:
+   - Security (always) — injection, authz, XSS, SSRF, secrets, crypto
+   - Correctness — contracts, edge cases, error handling
+   - Data — transactions, migrations, N+1, indexes
+   - Performance — unbounded loops, memory pressure, caching
+   - Architecture — DDD, layering, coupling
+   - Tests — coverage gaps, brittle assertions
+   - Operations — Docker, CI, env vars, deploy sequencing
+   - A11y (if frontend) — WCAG 2.1 AA: keyboard, ARIA, contrast, semantic HTML
+6. **Reflection pass** — challenges every finding: is it in the diff? concrete? severity accurate?
+7. **Formats output** — P0 → P3 findings with file+line, risk, fix, and `APPROVE / REQUEST_CHANGES / COMMENT`
+
+---
+
+## Project Setup
+
+### 1. Create `.ai/review.yml`
+
+Tune the review for your stack:
 
 ```yaml
+# TypeScript / NestJS
 review:
   language: typescript
   frameworks: [nestjs]
@@ -65,11 +103,23 @@ review:
     - "Inject dependencies via constructor, not service locator."
 ```
 
-See `references/config-guide.md` for the full reference and per-stack presets.
+```yaml
+# PHP / Laravel
+review:
+  language: php
+  frameworks: [laravel]
+  tools:
+    test_command: "./vendor/bin/pest"
+    static_analysis: [phpstan, psalm]
+  custom_rules:
+    - "Controllers must not contain business logic — use Action classes."
+```
 
-### Persistent Memory
+See [`references/config-guide.md`](references/config-guide.md) for all options and per-stack presets.
 
-Create `.ai/review-memory.md` to store project-specific review knowledge:
+### 2. Create `.ai/review-memory.md`
+
+Persist project-specific knowledge across reviews:
 
 ```markdown
 # Review Memory
@@ -87,48 +137,64 @@ Create `.ai/review-memory.md` to store project-specific review knowledge:
 - PHPStan flags mixed types in generated DTO classes — acceptable.
 ```
 
-The skill reads memory before each review to raise sensitivity on known issues and suppress known false positives. See `references/memory-guide.md` for format details.
+Memory is read before every review. The skill proposes new entries when it finds recurring patterns, and writes them when you confirm (or automatically if `auto_update: true`).
 
-### Automated Tools
+See [`references/memory-guide.md`](references/memory-guide.md) for format and management.
 
-The skill can run tests and linters alongside the review:
+---
 
-```bash
-# Auto-detect and run tests (Jest, Pest, PHPUnit, cargo test, go test, pytest)
-bash scripts/run-tests.sh
+## Output Format
 
-# Auto-detect and run linters (ESLint, PHPStan, Psalm, cargo clippy, ruff, semgrep)
-bash scripts/run-linters.sh
+```
+## Code Review — feature/auth-refactor
+
+**Stack**: TypeScript / NestJS
+**Scope**: 4 files changed, +187 / -23
+**Tools**: eslint (0 errors), npm test (47 passed)
+**Memory**: loaded (3 entries)
+
+### Summary
+...
+
+### Findings
+
+#### P1 — Refresh token exposed in error log
+**File**: `src/auth/auth.service.ts:94`
+**Risk**: Raw token logged in catch block — accessible to anyone with log access.
+**Fix**: Remove `token` from logger context: `this.logger.error('Refresh failed', { userId })`.
+
+### Recommendation
+REQUEST_CHANGES — P1 findings must be resolved before merge.
 ```
 
-Tools activate automatically when configured in `.ai/review.yml` or when the user explicitly asks. See `references/tools-guide.md` for per-tool commands and integration rules.
+Severity scale: `P0` (merge blocker) → `P1` (likely bug) → `P2` (architecture/test risk) → `P3` (low-risk improvement).
+
+See [`references/output-format.md`](references/output-format.md) for the full template and examples.
+
+---
 
 ## File Structure
 
 ```
 code-review-agent/
-├── SKILL.md                        # Skill instructions and frontmatter
-├── README.md                       # This file
+├── SKILL.md
+├── README.md
 ├── scripts/
-│   ├── run-tests.sh                # Auto-detect and run tests
-│   └── run-linters.sh              # Auto-detect and run linters
+│   ├── detect-surface.sh     # Detect review surface (auto/branch/PR/commits/staged)
+│   ├── load-config.sh        # Load .ai/review.yml
+│   ├── read-memory.sh        # Read .ai/review-memory.md
+│   ├── write-memory.sh       # Append entries to memory sections
+│   ├── run-tests.sh          # Auto-detect and run tests
+│   └── run-linters.sh        # Auto-detect and run linters
 └── references/
-    ├── config-guide.md             # .ai/review.yml reference + per-stack presets
-    ├── memory-guide.md             # Memory format and management
-    ├── tools-guide.md              # Tool commands and integration rules
-    └── review-system.md            # Specialist lens details and stack-specific prompts
+    ├── output-format.md      # Output template + examples
+    ├── lens-security.md      # Security pass checklist
+    ├── lens-a11y.md          # Accessibility pass checklist (WCAG 2.1 AA)
+    ├── config-guide.md       # .ai/review.yml reference + per-stack presets
+    ├── memory-guide.md       # Memory format and management
+    ├── tools-guide.md        # Tool commands and integration rules
+    └── review-system.md      # Specialist lens details and stack-specific prompts
 ```
-
-## Findings Format
-
-Findings are ordered by severity:
-
-- `P0` — data loss, security breach, production outage, hard merge blocker
-- `P1` — likely bug, serious security/performance regression, broken core workflow
-- `P2` — meaningful maintainability, architecture, test, or edge-case risk
-- `P3` — low-risk improvement, only noted on otherwise clean reviews
-
-Each finding includes: severity, file + line reference, concrete risk, and a suggested fix or validation path.
 
 ## License
 
