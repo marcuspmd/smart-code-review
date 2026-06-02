@@ -1,6 +1,6 @@
 # Review Configuration Guide
 
-Create `.ai/review.yml` (or `.codex/review.yml`) to configure the code review workflow per project.
+Create `.ai/review.yml` to configure the code review workflow per project.
 
 ## Config Discovery Order
 
@@ -8,8 +8,7 @@ The skill looks for config in this order (first match wins):
 
 1. `.ai/review.yml`
 2. `.ai/review.yaml`
-3. `.codex/review.yml`
-4. `.codex/review.yaml`
+
 
 If none is found, the review proceeds with stack auto-detection and default lenses.
 

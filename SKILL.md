@@ -1,7 +1,7 @@
 ---
 name: code-review-agent
 description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review this PR", "check my diff", "run code review", "review before merge".
-allowed-tools: "Read,Glob,Grep,Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*)"
+allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*)"
 version: "1.0.0"
 ---
 
@@ -29,9 +29,14 @@ See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
 ### Step 1: Load Project Context
 
-1. Read `AGENTS.md` files if present.
-2. Check for config at `.ai/review.yml`, `.ai/review.yaml`, `.codex/review.yml`, or `.codex/review.yaml`.
-3. Read memory at `.ai/review-memory.md` or the path configured by `review.memory.file`.
+1. Run the config loader — this guarantees the config is found and printed before analysis:
+
+```bash
+bash {baseDir}/scripts/load-config.sh
+```
+
+2. Read `AGENTS.md` files if present.
+3. Read memory at `.ai/review-memory.md` or the path returned by `review.memory.file` in the config.
 4. Skim `docs/architecture.md`, `docs/conventions.md`, `README.md`, or ADRs when visible.
 
 ### Step 2: Identify the Review Surface
