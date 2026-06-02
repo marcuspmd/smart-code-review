@@ -35,7 +35,7 @@ fi
 
 # Resolve memory file path
 if [ -z "$MEMORY_FILE" ] && [ -f "$ROOT/.ai/review.yml" ]; then
-  MEMORY_FILE=$(grep -E '^\s*file:' "$ROOT/.ai/review.yml" | head -1 | sed 's/.*file:[[:space:]]*//' | tr -d '"' | xargs 2>/dev/null || true)
+  MEMORY_FILE=$(grep -E '^\s*file:' "$ROOT/.ai/review.yml" | head -1 | sed 's/.*file:[[:space:]]*//' | sed 's/[[:space:]]*#.*//' | tr -d '"' | xargs 2>/dev/null || true)
 fi
 [ -z "$MEMORY_FILE" ] && MEMORY_FILE=".ai/review-memory.md"
 

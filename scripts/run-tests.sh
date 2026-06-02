@@ -19,7 +19,7 @@ done
 
 # Read test_command from .ai/review.yml if present
 if [ -f "$ROOT/.ai/review.yml" ] && command -v grep &>/dev/null; then
-  CONFIGURED=$(grep -E '^\s*test_command:' "$ROOT/.ai/review.yml" | sed 's/.*test_command:\s*//' | tr -d '"' | xargs 2>/dev/null || true)
+  CONFIGURED=$(grep -E '^\s*test_command:' "$ROOT/.ai/review.yml" | sed 's/.*test_command:\s*//' | sed 's/[[:space:]]*#.*//' | tr -d '"' | xargs 2>/dev/null || true)
   if [ -n "$CONFIGURED" ] && [ "$CONFIGURED" != "null" ]; then
     echo "[run-tests] Using configured test_command: $CONFIGURED"
     eval "$CONFIGURED ${FILTER:+"$FILTER"}"
