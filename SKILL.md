@@ -1,8 +1,8 @@
 ---
 name: code-review-agent
-description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review this PR", "check my diff", "run code review", "review before merge".
+description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review my open changes", "review this PR", "review against develop", "review against main", "review the last N commits", "check my diff", "run code review", "review before merge".
 allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*)"
-version: "1.1.0"
+version: "1.2.0"
 ---
 
 # Code Review Agent
@@ -46,16 +46,38 @@ bash {baseDir}/scripts/read-memory.sh
 
 ### Step 2: Identify the Review Surface
 
-- Prefer the user-provided PR, patch, branch, or file list.
-- For local work, run `git status --short` then use the relevant `git diff`.
-- Compare against a base branch when known; otherwise use staged/unstaged changes.
-- Do not review unrelated dirty work unless explicitly asked.
+Run the surface detector — it resolves the correct mode, prints stats, and outputs the exact `git diff` command to use:
 
 ```bash
-git diff --staged           # staged changes
-git diff main...HEAD        # branch diff
-git show <sha>              # specific commit
+# Auto mode (priority: staged → unstaged → branch ahead of base → last commit)
+bash {baseDir}/scripts/detect-surface.sh
+
+# Compare current branch to a specific target branch
+bash {baseDir}/scripts/detect-surface.sh --branch develop
+bash {baseDir}/scripts/detect-surface.sh --branch main
+bash {baseDir}/scripts/detect-surface.sh --branch staging
+
+# PR mode — auto-detects base branch (main / master / develop)
+bash {baseDir}/scripts/detect-surface.sh --pr
+
+# Last N commits on the current branch
+bash {baseDir}/scripts/detect-surface.sh --commits 3
+
+# Staged changes only (not yet committed)
+bash {baseDir}/scripts/detect-surface.sh --staged
 ```
+
+After running the detector, execute the `# command:` it printed to get the actual diff. Map user intent to mode:
+
+| User says | Mode to use |
+|---|---|
+| "review my changes" / "review open changes" | `--auto` (default) |
+| "review against develop / main / staging" | `--branch <name>` |
+| "review this PR" / "review before merging" | `--pr` |
+| "review the last 3 commits" | `--commits 3` |
+| "review what I staged" | `--staged` |
+
+Do not review unstaged changes alongside staged ones unless the user explicitly asks.
 
 ### Step 3: Build Review Profile
 
@@ -182,40 +204,67 @@ See `{baseDir}/references/memory-guide.md` for section reference and quality gui
 
 ## Examples
 
-### Example 1: Review Staged Changes
+### Example 1: Auto — Review Open Changes
 
-**User**: "Review my changes"
+**User**: "Review my changes" / "Review my open changes"
 
-1. Run `git diff --staged` to get the diff.
-2. Load `.ai/review.yml` and `.ai/review-memory.md` if present.
-3. Classify changed files, apply lenses, use `rg` for context.
-4. Output findings ordered P0 → P3.
+```bash
+bash {baseDir}/scripts/detect-surface.sh   # auto-detects: staged → unstaged → branch ahead → last commit
+# then run the printed command, e.g.: git diff --staged
+```
 
-### Example 2: Review a Feature Branch Before Merging
+### Example 2: Branch — Review Against a Target
 
-**User**: "Review feature/auth-refactor before merging"
+**User**: "Review against develop" / "Review before merging to main"
 
-1. Run `git diff main...feature/auth-refactor`.
-2. Load project context and memory.
-3. Apply security and correctness lenses with increased sensitivity on auth files.
-4. Run affected test command if configured.
+```bash
+bash {baseDir}/scripts/detect-surface.sh --branch develop
+# then run: git diff develop...HEAD
+```
 
-### Example 3: Review With Tests and Linters
+### Example 3: PR Mode — Full Branch Review
+
+**User**: "Review this PR" / "Review before merging"
+
+```bash
+bash {baseDir}/scripts/detect-surface.sh --pr
+# auto-detects base (main/master/develop), then: git diff main...HEAD
+```
+
+### Example 4: Last N Commits
+
+**User**: "Review the last 3 commits"
+
+```bash
+bash {baseDir}/scripts/detect-surface.sh --commits 3
+# then run: git diff HEAD~3..HEAD
+```
+
+### Example 5: Staged Only
+
+**User**: "Review what I've staged so far"
+
+```bash
+bash {baseDir}/scripts/detect-surface.sh --staged
+# then run: git diff --staged
+```
+
+### Example 6: Review With Tests and Linters
 
 **User**: "Review my changes and run the tests and linters"
 
-1. Identify diff, load context.
-2. Run `bash {baseDir}/scripts/run-tests.sh` — auto-detects framework.
-3. Run `bash {baseDir}/scripts/run-linters.sh` — auto-detects installed tools.
+1. Detect surface with `detect-surface.sh`.
+2. Run `bash {baseDir}/scripts/run-tests.sh`.
+3. Run `bash {baseDir}/scripts/run-linters.sh`.
 4. Integrate tool output as findings before reporting.
 
-### Example 4: Configure the Review Workflow
+### Example 7: Configure the Review Workflow
 
 **User**: "Set up review config for my Laravel project with PHPStan and Pest"
 
-1. Read `{baseDir}/references/config-guide.md` for the config reference.
-2. Create `.ai/review.yml` with the PHP/Laravel preset and the user's customizations.
-3. Confirm the config is valid and explain each section.
+1. Read `{baseDir}/references/config-guide.md`.
+2. Create `.ai/review.yml` with the PHP/Laravel preset.
+3. Confirm the config and explain each section.
 
 ## Resources
 
@@ -229,5 +278,6 @@ See `{baseDir}/references/memory-guide.md` for section reference and quality gui
 
 ## Version History
 
+- **v1.2.0** (2026-06-02): Surface detection modes (auto, branch, PR, commits, staged)
 - **v1.1.0** (2026-06-02): Specialist passes (Security, A11y), Reflection/Critic step, structured output format
 - **v1.0.0** (2026-06-02): Initial release
