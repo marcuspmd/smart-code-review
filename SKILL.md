@@ -2,7 +2,7 @@
 name: code-review-agent
 description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review this PR", "check my diff", "run code review", "review before merge".
 allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*)"
-version: "1.0.0"
+version: "1.1.0"
 ---
 
 # Code Review Agent
@@ -80,36 +80,53 @@ bash {baseDir}/scripts/run-linters.sh
 
 For per-stack tool commands and integration rules, see `{baseDir}/references/tools-guide.md`.
 
-### Step 5: Apply Specialist Lenses
+### Step 5: Run Specialist Passes
 
-- **Correctness**: broken contracts, edge cases, error handling, state transitions, backward compatibility.
-- **Security**: authz/authn, injection, XSS, SSRF, secrets, path traversal, unsafe deserialization.
-- **Data**: transaction scope, migrations, indexes, nullable/unique constraints, rollback paths.
-- **Performance**: N+1 queries, unbounded loops, memory pressure, caching, concurrency.
-- **Architecture**: layering, DDD boundaries, dependency direction, domain logic placement.
-- **Tests**: missing tests for changed behavior, brittle assertions, coverage gaps.
-- **Operations**: Docker, CI, env vars, observability, migration/deploy sequencing.
+Run each pass relevant to the review profile. Collect findings independently per pass before merging.
 
-Use `{baseDir}/references/review-system.md` for detailed specialist lens guidance and stack-specific prompts.
+**Security Pass** — run on every diff that touches endpoints, auth, input/output, file ops, crypto, or sessions:
+Read `{baseDir}/references/lens-security.md` and apply every applicable checklist item to the diff.
 
-### Step 6: Consolidate and Report
+**Correctness Pass** — broken contracts, edge cases, null handling, error paths, state transitions, backward compatibility, idempotency.
 
-- Deduplicate findings across lenses and tools.
-- Prioritize by impact and likelihood.
-- Ground each finding in a specific file and line when available.
-- Explain the risk and provide a concrete fix or validation path.
-- Skip style nits unless they hide real maintainability or correctness risk.
+**Data Pass** — transaction scope, deadlock risk, migration safety, missing indexes, nullable/unique constraint changes, external calls inside transactions, rollback paths.
 
-## Output
+**Performance Pass** — N+1 queries, unbounded loops, missing pagination, memory pressure, caching invalidation, blocking I/O, concurrency.
 
-Lead with findings ordered by severity:
+**Architecture Pass** — layering violations, DDD boundary breaches, dependency direction, fat controllers, duplicated business rules, unclear ownership.
 
-- `P0`: data loss, security breach, production outage, or hard merge blocker.
-- `P1`: likely bug, serious security/performance regression, or broken core workflow.
-- `P2`: meaningful maintainability, architecture, test, or edge-case risk.
-- `P3`: low-risk improvement, only worth mentioning on an otherwise clean review.
+**Tests Pass** — missing tests for changed behavior, assertions that don't actually test the change, brittle fixtures, integration test gaps for persistence/permissions/queues.
 
-After findings, include open questions only when they affect the result. If no findings, say so clearly and note any residual confidence gap.
+**Operations Pass** — Docker image pinning, secrets in CI, env var gaps, health checks, migration/deploy sequencing, observability.
+
+**A11y Pass** — run only if the diff touches HTML, JSX/TSX, CSS, or ARIA:
+Read `{baseDir}/references/lens-a11y.md` and apply every applicable checklist item to the diff.
+
+See `{baseDir}/references/review-system.md` for stack-specific prompts per pass.
+
+### Step 6: Reflection / Critic Pass
+
+Before reporting, challenge every finding collected in Step 5. For each finding, ask:
+
+1. **In the diff?** — Is this line actually changed in this diff, or is it pre-existing code?
+2. **In scope?** — Is the file excluded by `review.ignore.paths` in config?
+3. **In memory?** — Does the memory file list this as a known false positive or accepted pattern?
+4. **Concrete?** — Is there a specific file+line reference and a concrete fix? Speculative findings without a fix belong at P3 or get dropped.
+5. **Severity accurate?** — Does the impact in this codebase match the P0–P3 scale? Do not inherit severity from tool output.
+
+**Discard** findings that fail checks 1, 2, or 3.
+**Downgrade to P3 or drop** findings that fail check 4.
+**Deduplicate** findings caught by multiple passes into a single finding with the best description.
+
+### Step 7: Format and Report
+
+Use the template and rules in `{baseDir}/references/output-format.md` exactly.
+
+Key rules:
+- Order findings P0 → P3.
+- Every finding has: title, file+line, one-sentence risk, concrete fix.
+- End with a `APPROVE / REQUEST_CHANGES / COMMENT` recommendation.
+- Propose memory entries for recurring patterns found — do not write them automatically unless `auto_update: true`.
 
 ## Memory Handling
 
@@ -202,13 +219,15 @@ See `{baseDir}/references/memory-guide.md` for section reference and quality gui
 
 ## Resources
 
+- **Output format + examples**: `{baseDir}/references/output-format.md`
+- **Security lens checklist**: `{baseDir}/references/lens-security.md`
+- **A11y lens checklist**: `{baseDir}/references/lens-a11y.md`
+- **Specialist lens details**: `{baseDir}/references/review-system.md`
 - **Config reference**: `{baseDir}/references/config-guide.md`
 - **Memory format**: `{baseDir}/references/memory-guide.md`
 - **Tools integration**: `{baseDir}/references/tools-guide.md`
-- **Specialist lens details**: `{baseDir}/references/review-system.md`
-- **Run tests**: `{baseDir}/scripts/run-tests.sh`
-- **Run linters**: `{baseDir}/scripts/run-linters.sh`
 
 ## Version History
 
+- **v1.1.0** (2026-06-02): Specialist passes (Security, A11y), Reflection/Critic step, structured output format
 - **v1.0.0** (2026-06-02): Initial release
