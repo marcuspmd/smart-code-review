@@ -33,6 +33,8 @@ review the last 3 commits
 review what I staged
 run code review and tests
 review my changes and run sonarqube
+init review
+install review hooks
 ```
 
 ### Slash command (explicit)
@@ -40,6 +42,23 @@ review my changes and run sonarqube
 ```
 /smart-code-review
 # or legacy alias: /code-review-agent
+```
+
+---
+
+## Quick Initialization
+
+Initialize code review configuration, memory, and rules interactively:
+
+```bash
+# Interactive wizard
+bash scripts/init.sh
+
+# Fast setup with defaults
+bash scripts/init.sh --defaults
+
+# Install Git pre-commit & pre-push review hooks
+bash scripts/install-hooks.sh
 ```
 
 ---

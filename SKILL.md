@@ -29,6 +29,8 @@ Responds in the user's language unless repository conventions require otherwise.
 | "review the last 3 commits" | Last N commits on current branch |
 | "review what I staged" | Staged changes only |
 | "review and run tests" / "review and run linters" / "run sonar" | Auto surface + tool execution |
+| "init review" / "setup review config" | Interactive configuration & memory setup (`init.sh`) |
+| "install review hooks" / "setup git hooks" | Installs git pre-commit & pre-push hooks (`install-hooks.sh`) |
 | "save this to memory" / "add rule to review memory" | Memory addition (`manage-memory.sh --add`) |
 | "remove rule from memory" / "forget rule about X" | Memory removal (`manage-memory.sh --remove`) |
 | "update memory rule X with Y" | Memory edit/replacement (`manage-memory.sh --replace`) |
@@ -50,6 +52,13 @@ Responds in the user's language unless repository conventions require otherwise.
 See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
 ## Instructions
+
+### Step 0: Pre-Review Hooks
+
+If configured in `.ai/review.yml`, run the pre-review lifecycle hook:
+```bash
+bash {baseDir}/scripts/run-hook.sh pre_review
+```
 
 ### Step 1: Load Project Context
 
@@ -178,6 +187,7 @@ Run each pass relevant to the review profile. Collect findings independently per
   Read `{baseDir}/references/lens-performance.md` and check for unbounded queries, memory leaks, and blocking I/O.
 - **Architecture Pass** — run on module additions, refactors, domain logic, and interface changes:
   Read `{baseDir}/references/lens-architecture.md` and check for DDD/layer violations, coupling, and circular dependencies.
+  *Plan Alignment Check*: If an implementation plan exists (`.claude/plans/*.md`, `plans/*.md`, `docs/plans/*.md`), check if the code adheres to the approved scope or introduced unauthorized scope creep / unapproved R2-R3 artifacts.
 - **Tests Pass** — missing tests for changed behavior, assertions that don't actually test the change, brittle fixtures.
 - **Operations Pass** — Docker image pinning, secrets in CI, env var gaps, health checks, deploy sequencing.
 - **A11y Pass** — run only if the diff touches HTML, JSX/TSX, CSS, or ARIA:
@@ -231,6 +241,38 @@ If the resolved config contains `tools.mcps`, offer the configured post-review a
 **Graceful degradation**: if an MCP tool call fails or the server is unavailable, append a note to the output and continue. The review report is always the primary deliverable — never abort or re-run the review due to MCP failures.
 
 See `{baseDir}/references/tools-guide.md` for MCP tool name resolution and config examples.
+
+### Step 7c: Execute Post-Review Hooks
+
+Run configured lifecycle hooks based on final review findings:
+```bash
+# Post-review hook (runs for all completed reviews)
+bash {baseDir}/scripts/run-hook.sh post_review --verdict "<VERDICT>"
+
+# Blocker vs Approved hook
+if [ "<P0_COUNT>" -gt 0 ] || [ "<VERDICT>" = "REQUEST_CHANGES" ]; then
+  bash {baseDir}/scripts/run-hook.sh on_blocker --verdict "<VERDICT>" --p0-count "<P0_COUNT>"
+else
+  bash {baseDir}/scripts/run-hook.sh on_approved --verdict "<VERDICT>" --p0-count 0
+fi
+```
+
+---
+
+## Setup & Initialization Mode
+
+When the user says *"init review"*, *"configure smart-code-review"*, or *"setup review for this project"*:
+
+1. Run the interactive initialization wizard or prompt the user directly:
+```bash
+bash {baseDir}/scripts/init.sh
+```
+2. Guide the user through project review settings:
+   - **Detected Stack**: Auto-detects package managers (Composer, NPM, Cargo, Go, Pip/Poetry, Docker) and configures linters/tests accordingly.
+   - **Language**: Choose output language (`pt-BR`, `en`, `es`).
+   - **SonarQube / SonarCloud**: Ask if Sonar analysis is used in the project.
+   - **Memory Auto-Update**: Decide whether recurring patterns are automatically proposed for memory.
+   - **Git Hooks**: Offer installing `pre-commit` and `pre-push` review hooks via `bash {baseDir}/scripts/install-hooks.sh`.
 
 ## Memory Lifecycle & Management
 
