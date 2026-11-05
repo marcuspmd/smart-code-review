@@ -5,15 +5,15 @@ Use this reference when setting up or refining the code review workflow, creatin
 ## Suggested Project Files
 
 ```text
-.ai/review.yml
-.ai/review-memory.md
-.ai/review-rules.md
-docs/architecture.md
-docs/conventions.md
-docs/adr/
+.ai/review.yml          # Core review configuration (lenses, tools, priorities, ignore rules)
+.ai/review-memory.md    # Persistent review memory (recurring issues, accepted patterns, false positives)
+.ai/review-rules.md     # Optional freeform repository rules and guidelines in Markdown
+docs/architecture.md    # Durable architectural design decisions
+docs/conventions.md     # Code style and framework guidelines
+docs/adr/               # Architecture Decision Records
 ```
 
-Keep durable project decisions in docs or ADRs. Keep review-specific recurring lessons in memory.
+Keep durable project decisions in docs or ADRs. Keep review-specific recurring lessons in memory. When `.ai/review-rules.md` exists, the agent loads and respects its guidelines during review passes.
 
 ## Review Config Example
 
@@ -88,33 +88,44 @@ review:
 - Some generated API clients intentionally violate local naming conventions.
 ```
 
-## Specialist Lens Details
+## Specialist Lenses
 
-### Security
+Detailed checklists and P0–P3 severity rubrics are available in dedicated lens documents:
 
-Check authorization before state changes, object-level permission checks, input validation, SQL/NoSQL injection, XSS, CSRF, SSRF, path traversal, unsafe file upload, secrets in code, weak crypto, and over-broad logs.
+- **Security Lens**: [`references/lens-security.md`](lens-security.md) — Authorization, injection, XSS, SSRF, path traversal, secrets, crypto, CORS.
+- **Data & Migrations Lens**: [`references/lens-data.md`](lens-data.md) — Zero-downtime migrations, lock timeouts, transaction scopes, N+1, composite indexes.
+- **Correctness & Concurrency Lens**: [`references/lens-correctness.md`](lens-correctness.md) — Race conditions, deadlocks, null safety, boundaries, error swallowing.
+- **Performance Lens**: [`references/lens-performance.md`](lens-performance.md) — Unbounded queries, memory leaks, event loop blocking, cache stampede.
+- **Architecture Lens**: [`references/lens-architecture.md`](lens-architecture.md) — Layering, DDD boundaries, dependency inversion, fat controllers.
+- **Accessibility (A11y) Lens**: [`references/lens-a11y.md`](lens-a11y.md) — WCAG 2.1 AA, keyboard nav, ARIA, focus, contrast.
 
-### Correctness
+### Summary of Core Passes
 
-Check changed contracts, nullability, race conditions, idempotency, retry behavior, boundary values, time zone handling, partial failure paths, exception behavior, and backward compatibility.
-
-### Data, SQL, and Transactions
-
-Check missing indexes, incorrect uniqueness, unsafe nullable changes, destructive migrations, deploy ordering, N+1 queries, transaction scope, deadlock risk, external calls inside transactions, and absent rollback paths.
-
-### Architecture
-
-Check dependency direction, domain/application/infrastructure boundaries, fat controllers, entities depending on repositories, framework leakage into domain models, duplicated business rules, and unclear ownership.
-
-### Performance
-
-Check unbounded loops, repeated queries, inefficient joins, high-cardinality cache keys, cache invalidation, memory growth, unnecessary serialization, blocking I/O, and concurrency bottlenecks.
-
-### Tests
-
-Check whether changed behavior has a focused test, whether edge cases are covered, whether fixtures hide important state, and whether integration tests are needed for persistence, permissions, queues, or transactions.
+- **Security**: Check authorization before state changes, object-level permission checks, input validation, SQL/NoSQL injection, XSS, CSRF, SSRF, path traversal, unsafe file upload, secrets in code, weak crypto, and over-broad logs.
+- **Correctness**: Check changed contracts, nullability, race conditions, idempotency, retry behavior, boundary values, time zone handling, partial failure paths, exception behavior, and backward compatibility.
+- **Data, SQL, and Transactions**: Check missing indexes, incorrect uniqueness, unsafe nullable changes, destructive migrations, deploy ordering, N+1 queries, transaction scope, deadlock risk, external calls inside transactions, and absent rollback paths.
+- **Architecture**: Check dependency direction, domain/application/infrastructure boundaries, fat controllers, entities depending on repositories, framework leakage into domain models, duplicated business rules, and unclear ownership.
+- **Performance**: Check unbounded loops, repeated queries, inefficient joins, high-cardinality cache keys, cache invalidation, memory growth, unnecessary serialization, blocking I/O, and concurrency bottlenecks.
+- **Tests**: Check whether changed behavior has a focused test, whether edge cases are covered, whether fixtures hide important state, and whether integration tests are needed for persistence, permissions, queues, or transactions.
+- **Operations**: Check container image pinning, build reproducibility, secrets exposure in CI/CD pipelines, environment variable parity, health check endpoints, and deploy sequencing.
 
 ## Stack-Specific Prompts
+
+### Python (FastAPI, Django, Flask, SQLAlchemy, Pydantic)
+
+- Inspect async endpoints for blocking synchronous calls (e.g. `requests.get` or blocking DB drivers in `async def`).
+- Check ORM queries for N+1 issues: ensure `select_related()` / `prefetch_related()` in Django or `joinedload()` in SQLAlchemy.
+- Watch for mutable default arguments in functions (`def foo(items=[])`).
+- Inspect Pydantic models for validation gaps: beware of `model_validate()` on unvalidated raw dicts without schema stripping.
+- Check datetime objects: avoid mixing naive and timezone-aware datetimes.
+
+### Go
+
+- Inspect goroutine lifecycles: ensure every spawned goroutine has a termination guarantee via `context.Context` or quit channels.
+- Inspect error handling: verify `if err != nil` is never swallowed or ignored.
+- Check mutex locking patterns: verify `mu.Lock()` is immediately followed by `defer mu.Unlock()`, and lock is not held across network I/O.
+- Check loop variable pointer aliasing (in Go < 1.22) and map/slice concurrency races (`go test -race`).
+- Ensure `http.Response.Body` is closed with `defer resp.Body.Close()`.
 
 ### PHP, Laravel, and Phalcon
 
@@ -144,4 +155,3 @@ Check whether changed behavior has a focused test, whether edge cases are covere
 - Do not invent a severity from tool output alone; severity comes from impact in this codebase.
 - If line numbers are unavailable, reference the smallest reliable file/function/symbol scope.
 - Include "no findings" only when the review actually checked the relevant diff and context.
-

@@ -1,19 +1,21 @@
 ---
 name: smart-code-review
-description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review my open changes", "review this PR", "review against develop", "review against main", "review the last N commits", "check my diff", "run code review", "review before merge".
-allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*),mcp__*"
-version: "1.3.0"
+description: Context-aware code review with memory, configurable rules, specialist lenses, and automated tool integration. Runs tests, linters, and static analyzers alongside the review. Use when reviewing PRs, diffs, commits, or local changes before merge. Use when inspecting PHP/Laravel, TypeScript/NestJS, Rust, Go, Python, Docker, SQL, SonarQube, or CI changes. Use when running automated checks, creating review rules, or tuning project review memory. Trigger with "review my changes", "review my open changes", "review this PR", "review against develop", "review against main", "review the last N commits", "check my diff", "run code review", "review before merge".
+allowed-tools: "Read,Glob,Grep,Bash(bash:*),Bash(git:*),Bash(rg:*),Bash(npm:*),Bash(npx:*),Bash(yarn:*),Bash(pnpm:*),Bash(bun:*),Bash(composer:*),Bash(pest:*),Bash(phpunit:*),Bash(cargo:*),Bash(go:*),Bash(pytest:*),Bash(ruff:*),Bash(mypy:*),Bash(phpstan:*),Bash(psalm:*),Bash(semgrep:*),Bash(eslint:*),Bash(sonar-scanner:*),Bash(docker:*),Bash(make:*),Bash(curl:*),mcp__*,mcp_*"
+version: "1.5.0"
 ---
 
-# Code Review Agent
+# Smart Code Review
 
 Context-aware AI code review with project configuration, persistent memory, specialist lenses, and automated tool integration.
 
 ## Overview
 
-This skill runs a structured code review by loading project context (config, memory, architecture docs), identifying the diff surface, applying specialist lenses (correctness, security, data, performance, architecture, tests, ops), running relevant tools, and producing prioritized findings.
+This skill runs a structured code review by loading project context (config, memory, rules, architecture docs), identifying the diff surface, applying specialist lenses (correctness, security, data, performance, architecture, tests, ops), running relevant tools, and producing prioritized findings.
 
 Responds in the user's language unless repository conventions require otherwise.
+
+> **Path Note**: `{baseDir}` represents the installation path of this skill. If invoking from within the skill directory, relative paths (`./scripts/...` and `./references/...`) can be used directly.
 
 ## How to Invoke
 
@@ -21,14 +23,18 @@ Responds in the user's language unless repository conventions require otherwise.
 
 | What the user says | Review surface used |
 |---|---|
-| "review my changes" / "review my open changes" | Auto: staged → unstaged → branch ahead → last commit |
+| "review my changes" / "review my open changes" | Auto: staged → unstaged → untracked → branch ahead → last commit |
 | "review against develop" / "review against main" | Branch diff: current branch vs named target |
 | "review this PR" / "review before merging" | PR mode: branch vs auto-detected base |
 | "review the last 3 commits" | Last N commits on current branch |
 | "review what I staged" | Staged changes only |
-| "review and run tests" / "review and run linters" | Auto surface + tool execution |
+| "review and run tests" / "review and run linters" / "run sonar" | Auto surface + tool execution |
+| "save this to memory" / "add rule to review memory" | Memory addition (`manage-memory.sh --add`) |
+| "remove rule from memory" / "forget rule about X" | Memory removal (`manage-memory.sh --remove`) |
+| "update memory rule X with Y" | Memory edit/replacement (`manage-memory.sh --replace`) |
+| "compact review memory" / "clean up memory" | Memory pruning & deduplication (`manage-memory.sh --compact`) |
 
-**Slash command**: `/code-review-agent`
+**Slash commands**: `/smart-code-review` or `/code-review-agent`
 
 ## Prerequisites
 
@@ -36,8 +42,10 @@ Responds in the user's language unless repository conventions require otherwise.
 
 **Optional configuration files**:
 - `~/.ai/review.yml` — global defaults (merged with project config; project wins on conflict)
-- `.ai/review.yml` or `.codex/review.yml` — review config (lenses, tools, priorities, ignore rules, custom rules)
+- `.ai/review.yml` or `.ai/review.yaml` (or custom path via `--config <path>`) — review config (lenses, tools, priorities, ignore rules, custom rules)
 - `.ai/review-memory.md` — persistent review memory (recurring issues, accepted patterns, false positives)
+- `.ai/review-rules.md` — project-specific freeform guidelines and architecture constraints in Markdown
+- `sonar-project.properties` — optional SonarQube / SonarCloud project configuration
 
 See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
@@ -49,11 +57,14 @@ See `{baseDir}/references/config-guide.md` for the full configuration reference.
 
 ```bash
 bash {baseDir}/scripts/load-config.sh --global ~/.ai/review.yml
+# Or pass --config <path> to override project config:
+# bash {baseDir}/scripts/load-config.sh --config .ai/custom-review.yml
 ```
 
 When both configs exist, the output contains two labeled sections (`# --- GLOBAL CONFIG ---` and `# --- PROJECT CONFIG ---`). Apply these merge rules:
-- Scalar values (`language`, `test_command`, `auto_update`, etc.): project wins
+- Scalar values (`language`, `auto_update`, etc.): project wins
 - List values (`priorities`, `always_check`, `ignore.paths`, `custom_rules`, `extra_bash`, `extra_skills`): additive — global items first, then project items, deduplicated
+- `tools.<name>`: project tool definition overrides global; commands, env, and parameters merged
 - `tools.mcps`: additive; if same `server` in both, project entry takes precedence
 
 2. Load memory (guaranteed — prints content or reports missing):
@@ -62,22 +73,24 @@ When both configs exist, the output contains two labeled sections (`# --- GLOBAL
 bash {baseDir}/scripts/read-memory.sh
 ```
 
-3. Read `AGENTS.md` files if present.
-4. Skim `docs/architecture.md`, `docs/conventions.md`, `README.md`, or ADRs when visible.
-5. Discover peer skills — look for other installed skills that may enrich the review:
+3. Read `.ai/review-rules.md` if present in the repository root for team-specific rules.
+4. Read `AGENTS.md` files if present.
+5. Skim `docs/architecture.md`, `docs/conventions.md`, `README.md`, or ADRs when visible.
+6. Discover peer skills — look for other installed skills that may enrich the review:
 
 ```bash
-bash {baseDir}/scripts/discover-skills.sh
+# Pass extra paths from tools.extra_skills if present in the loaded config
+bash {baseDir}/scripts/discover-skills.sh --extra-paths "<extra_paths_if_configured>"
 ```
 
 For each skill found: read its SKILL.md to extract lens definitions, checklists, or rule sets relevant to the current review surface. Incorporate those items as additional checklist entries in the relevant Step 5 specialist passes. **Do not invoke the skill** — only read its file content. If no skills are found, skip silently.
 
-### Step 2: Identify the Review Surface
+### Step 2: Identify the Review Surface & Context Protection
 
 Run the surface detector — it resolves the correct mode, prints stats, and outputs the exact `git diff` command to use:
 
 ```bash
-# Auto mode (priority: staged → unstaged → branch ahead of base → last commit)
+# Auto mode (priority: staged → unstaged → untracked → branch ahead of base → last commit)
 bash {baseDir}/scripts/detect-surface.sh
 
 # Compare current branch to a specific target branch
@@ -95,17 +108,13 @@ bash {baseDir}/scripts/detect-surface.sh --commits 3
 bash {baseDir}/scripts/detect-surface.sh --staged
 ```
 
-After running the detector, execute the `# command:` it printed to get the actual diff. Map user intent to mode:
-
-| User says | Mode to use |
-|---|---|
-| "review my changes" / "review open changes" | `--auto` (default) |
-| "review against develop / main / staging" | `--branch <name>` |
-| "review this PR" / "review before merging" | `--pr` |
-| "review the last 3 commits" | `--commits 3` |
-| "review what I staged" | `--staged` |
-
-Do not review unstaged changes alongside staged ones unless the user explicitly asks.
+#### Context Protection for Large Diffs:
+1. **Lockfiles Excluded**: The detector automatically appends exclusions for `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `composer.lock`, and `Cargo.lock`. Never dump raw lockfile changes into context.
+2. **Diff Size Triage**:
+   - If the detector reports that the diff contains **over 500 lines changed** or **more than 10 files**:
+     - First, run `git diff --stat` to identify the high-risk files (controllers, domain logic, migrations, security configs).
+     - Read the diff in focused batches or file-by-file (e.g. `git diff <base>...HEAD -- path/to/file.ts`) rather than dumping a massive multi-thousand line diff into context at once.
+     - Deprioritize or skim boilerplate/generated files.
 
 ### Step 3: Build Review Profile
 
@@ -113,9 +122,10 @@ Do not review unstaged changes alongside staged ones unless the user explicitly 
 - Classify changed files by role: controller, service, entity, migration, SQL, test, Docker, CI, config, docs.
 - Map each file class to the most relevant lenses.
 - Check the resolved config for:
-  - `tools.extra_bash` — note additional analysis tools available for Step 4 (e.g., `docker:*`, `kubectl:*`)
+  - `tools.extra_bash` — note additional analysis tools available for Step 4 (e.g., `docker:*`, `kubectl:*`, `make:*`)
   - `tools.mcps` — note which post-review MCP actions are configured for Step 7b
-  - `tools.extra_skills` — read each path as an additional lens source (same treatment as discovered skills in Step 1)
+  - `tools.extra_skills` — note extra skill paths loaded in Step 1
+  - Standardized tools declared under `tools.<tool>` (e.g., `tools.sonar`, `tools.test`, `tools.test-e2e`) — inspect `commands` (run, up, health, down), `env`, and `parameters` (diff_scoped, timeout, min_coverage).
 
 ### Step 4: Run Tools When Useful
 
@@ -128,33 +138,50 @@ rg "functionName" --type ts
 # Run affected tests (uses config or auto-detection)
 bash {baseDir}/scripts/run-tests.sh
 
-# Run linters and static analysis
+# Run linters and static analysis (scoped to changed files or project)
 bash {baseDir}/scripts/run-linters.sh
+
+# Target specific changed files for linters
+bash {baseDir}/scripts/run-linters.sh --files "path/to/file1.ts,path/to/file2.ts"
 ```
 
-For per-stack tool commands and integration rules, see `{baseDir}/references/tools-guide.md`.
+#### Standardized Tool Lifecycle Execution (`tools.<name>`)
+
+When structured tools are configured in `.ai/review.yml` (e.g. `sonar`, `test`, `test-e2e`, `security`) or requested by the user:
+1. **Health & Readiness Check**:
+   - If `commands.health` is defined (e.g. `curl -f http://localhost:9000/api/system/status`), run it first.
+   - If healthy, proceed directly.
+   - If offline or fails, execute `commands.up` (e.g. `make sonar-up` or `docker compose up -d`), wait for readiness, and then proceed.
+2. **Environment Resolution**:
+   - Resolve variables declared in `env:`. If referenced as `${VAR_NAME}`, read from the environment or local `.env` file (never commit plaintext secrets in config).
+3. **Execute Primary Command**:
+   - Run `commands.run` (e.g. `make sonar-scan`, `make test`, `make test-e2e`).
+4. **Parameter Interpretation & AI In-Context Diff-Scoping**:
+   - If `parameters.diff_scoped: true`: Query the tool's findings API or CLI output. In-context, intersect each finding with the exact files and lines touched in this review's `git diff` (Step 2). Drop findings on untouched lines as pre-existing technical debt.
+   - If `parameters.min_coverage` is defined: Verify if test coverage reported meets the threshold; if below, raise a P1 finding.
+5. **Teardown (Optional)**:
+   - If the user requests cleanup or shutdown after the review, execute `commands.down` (e.g. `make sonar-down`).
+
+For per-stack tool commands, SonarQube/SonarCloud setup, and integration rules, see `{baseDir}/references/tools-guide.md`.
 
 ### Step 5: Run Specialist Passes
 
-Run each pass relevant to the review profile. Collect findings independently per pass before merging.
+Run each pass relevant to the review profile. Collect findings independently per pass before merging:
 
-**Security Pass** — run on every diff that touches endpoints, auth, input/output, file ops, crypto, or sessions:
-Read `{baseDir}/references/lens-security.md` and apply every applicable checklist item to the diff.
-
-**Correctness Pass** — broken contracts, edge cases, null handling, error paths, state transitions, backward compatibility, idempotency.
-
-**Data Pass** — transaction scope, deadlock risk, migration safety, missing indexes, nullable/unique constraint changes, external calls inside transactions, rollback paths.
-
-**Performance Pass** — N+1 queries, unbounded loops, missing pagination, memory pressure, caching invalidation, blocking I/O, concurrency.
-
-**Architecture Pass** — layering violations, DDD boundary breaches, dependency direction, fat controllers, duplicated business rules, unclear ownership.
-
-**Tests Pass** — missing tests for changed behavior, assertions that don't actually test the change, brittle fixtures, integration test gaps for persistence/permissions/queues.
-
-**Operations Pass** — Docker image pinning, secrets in CI, env var gaps, health checks, migration/deploy sequencing, observability.
-
-**A11y Pass** — run only if the diff touches HTML, JSX/TSX, CSS, or ARIA:
-Read `{baseDir}/references/lens-a11y.md` and apply every applicable checklist item to the diff.
+- **Security Pass** — run on every diff touching endpoints, auth, input/output, file ops, crypto, or sessions:
+  Read `{baseDir}/references/lens-security.md` and apply all relevant checklist items.
+- **Data & Migrations Pass** — run on diffs with migrations, SQL, ORM entities, transactions, or indexes:
+  Read `{baseDir}/references/lens-data.md` and check for locks, zero-downtime expand/contract, N+1 queries, and rollback methods.
+- **Correctness & Concurrency Pass** — run on logic changes, race conditions, edge cases, error handling, and state machines:
+  Read `{baseDir}/references/lens-correctness.md` and check for race conditions, unhandled exceptions, and boundaries.
+- **Performance Pass** — run on loops, heavy queries, cache operations, serialization, and high-throughput paths:
+  Read `{baseDir}/references/lens-performance.md` and check for unbounded queries, memory leaks, and blocking I/O.
+- **Architecture Pass** — run on module additions, refactors, domain logic, and interface changes:
+  Read `{baseDir}/references/lens-architecture.md` and check for DDD/layer violations, coupling, and circular dependencies.
+- **Tests Pass** — missing tests for changed behavior, assertions that don't actually test the change, brittle fixtures.
+- **Operations Pass** — Docker image pinning, secrets in CI, env var gaps, health checks, deploy sequencing.
+- **A11y Pass** — run only if the diff touches HTML, JSX/TSX, CSS, or ARIA:
+  Read `{baseDir}/references/lens-a11y.md` and apply WCAG 2.1 AA checklist items.
 
 See `{baseDir}/references/review-system.md` for stack-specific prompts per pass.
 
@@ -167,6 +194,7 @@ Before reporting, challenge every finding collected in Step 5. For each finding,
 3. **In memory?** — Does the memory file list this as a known false positive or accepted pattern?
 4. **Concrete?** — Is there a specific file+line reference and a concrete fix? Speculative findings without a fix belong at P3 or get dropped.
 5. **Severity accurate?** — Does the impact in this codebase match the P0–P3 scale? Do not inherit severity from tool output.
+6. **Line number verified?** — **CRITICAL**: Do not rely purely on arithmetic from git diff `@@ -a,b +c,d @@` headers. Verify the exact line number by viewing the file context to ensure `path/to/file:line` is accurate.
 
 **Discard** findings that fail checks 1, 2, or 3.
 **Downgrade to P3 or drop** findings that fail check 4.
@@ -194,163 +222,115 @@ If the resolved config contains `tools.mcps`, offer the configured post-review a
 **P0 findings → create issue/ticket** (if `create_issue` or `create_ticket` is in `use_for`):
 - Offer to create one issue/ticket per P0 finding.
 - Title: the finding title. Body: file+line, one-sentence risk, concrete fix.
-- MCP tool name pattern: `mcp__<server>__create_issue` or `mcp__<server>__create_ticket`
+- MCP tool name patterns: `mcp__<server>__create_issue` (Claude) or `mcp_<server>_create_issue` (Universal).
 
 **PR comment** (if `add_pr_comment` is in `use_for`):
 - Offer to post the full review output as a PR comment.
-- MCP tool name pattern: `mcp__<server>__add_pr_comment`
+- MCP tool name patterns: `mcp__<server>__add_pr_comment` (Claude) or `mcp_<server>_add_pr_comment` (Universal).
 
 **Graceful degradation**: if an MCP tool call fails or the server is unavailable, append a note to the output and continue. The review report is always the primary deliverable — never abort or re-run the review due to MCP failures.
 
 See `{baseDir}/references/tools-guide.md` for MCP tool name resolution and config examples.
 
-## Memory Handling
+## Memory Lifecycle & Management
 
-### Reading memory
+Memory stores persistent project knowledge across reviews. The agent must proactively keep memory up-to-date and compact.
 
-Always run this at the start of every review — it prints the memory file (or reports that none exists):
-
+### 1. Reading Memory
+Always run this at the start of every review (Step 1):
 ```bash
 bash {baseDir}/scripts/read-memory.sh
 ```
 
-### Writing memory
-
-After a review, when a useful recurring lesson is found, write it with:
-
+### 2. Adding Memory Entries
+When a recurring bug pattern, convention, or false positive is identified:
 ```bash
-# Valid sections: Architecture | Recurring Issues | Accepted Patterns | False Positives | Custom Rules
-bash {baseDir}/scripts/write-memory.sh --section "Recurring Issues" --entry "Reports prone to N+1 queries in analytics module"
+bash {baseDir}/scripts/manage-memory.sh --add --section "Recurring Issues" --entry "Reports prone to N+1 queries in analytics module"
+# or write-memory.sh:
 bash {baseDir}/scripts/write-memory.sh --section "Architecture" --entry "DDD: Domain/ must not import from Infrastructure/"
-bash {baseDir}/scripts/write-memory.sh --section "False Positives" --entry "PHPStan flags mixed types in generated DTOs — acceptable"
-bash {baseDir}/scripts/write-memory.sh --section "Accepted Patterns" --entry "Migrations split into schema + backfill steps for zero-downtime"
 ```
 
-The script creates `.ai/review-memory.md` (and the `.ai/` directory) if they don't exist yet.
+### 3. Editing & Replacing Outdated Rules
+When a convention changes or an existing rule needs clarification:
+```bash
+bash {baseDir}/scripts/manage-memory.sh --replace "<old rule text>" --with "<updated rule text>" [--section "Architecture"]
+```
 
-### Write policy
+### 4. Removing Obsolete Rules
+When a pattern is deleted, deprecated, or superseded by a linter rule:
+```bash
+bash {baseDir}/scripts/manage-memory.sh --remove "<text to match>" [--section "False Positives"]
+```
 
-- Do **not** write memory during external PR reviews unless the user asks or `review.memory.auto_update: true` is set.
-- Propose the entry first ("I can save this to memory — want me to?") when auto_update is false.
-- When auto_update is true, write immediately after the review without asking.
+### 5. Inspecting Stats & Compacting
+Inspect entry counts and compact duplicate/redundant entries:
+```bash
+# Check memory entry count per section
+bash {baseDir}/scripts/manage-memory.sh --stats
 
-See `{baseDir}/references/memory-guide.md` for section reference and quality guidelines.
+# Compact and deduplicate memory entries
+bash {baseDir}/scripts/manage-memory.sh --compact
+```
+
+### 6. AI-Assisted Memory Synthesis & Compaction Protocol
+When memory exceeds **30 entries**, becomes cluttered with overlapping rules, or the user requests compaction, the agent must follow the **Memory Compaction Protocol** in `{baseDir}/references/memory-guide.md`:
+1. **Inventory & Verify**: Grep/Glob codebase to check if referenced classes/modules still exist.
+2. **Prune**: Drop expired exceptions, generic linter redundancies, and fixed one-off bug notes.
+3. **Consolidate**: Merge overlapping rules within the same section into unified, actionable statements.
+4. **Report & Update**: Present the before/after statistics and table of changes, then save the streamlined `.ai/review-memory.md`.
+
+### 7. Agent Autonomous Execution Protocol
+
+The AI agent has full authority and tools to invoke these memory scripts directly:
+
+- **Direct User Instructions**: When the user asks to save, update, delete, or clean up memory (e.g., *"remember this"*, *"remove that rule"*, *"clean memory"*), the agent **must execute the corresponding script immediately** (`manage-memory.sh --add/--replace/--remove/--compact`) instead of telling the user to run it manually.
+- **Confirmation After Review**: When `auto_update: false` and the agent proposed a memory entry at the end of a review, if the user replies with consent (*"yes, save it"*, *"approved"*, *"write that to memory"*), the agent **must immediately invoke** `bash {baseDir}/scripts/manage-memory.sh --add ...`.
+- **Automatic Pruning on Code Deletion**: If the reviewed diff deletes a legacy class/module that was previously whitelisted in `review-memory.md` (e.g. under `Accepted Patterns` or `False Positives`), the agent should execute or propose `manage-memory.sh --remove "<module_name>"` to keep the memory synchronized with the current codebase.
+- **Compaction on Demand**: When instructed to *"organize"*, *"compact"*, or *"clean up"* memory, the agent runs `manage-memory.sh --compact` or reads the memory file, synthesizes the bullet points, and writes the cleaner, streamlined version.
+
+See `{baseDir}/references/memory-guide.md` for quality guidelines and lifecycle details.
 
 ## Error Handling
 
 1. **Error**: No diff available.
    **Solution**: Ensure changes are staged or specify the branch/commit/PR to compare.
-
 2. **Error**: Config file not found.
    **Solution**: Create `.ai/review.yml` from the example in `{baseDir}/references/config-guide.md`. Review proceeds with defaults if config is absent.
-
 3. **Error**: Test command fails or exits non-zero.
-   **Solution**: Check `review.tools.test_command` in config. Include the failure as a P1 finding rather than aborting the review.
-
+   **Solution**: Check `review.tools.test.commands.run` in config. Include the failure as a P1 finding rather than aborting the review.
 4. **Error**: Large diff (1000+ lines).
-   **Solution**: Focus on highest-risk files; suggest splitting the PR.
-
+   **Solution**: Use `git diff --stat`, prioritize critical files, review in batches, and recommend splitting the PR.
 5. **Error**: Memory file missing.
    **Solution**: Review proceeds without memory. Create `.ai/review-memory.md` at any time to enable it.
-
-6. **Error**: Tool not available (e.g., phpstan not installed).
-   **Solution**: Skip that tool; note the gap; suggest installing it.
-
+6. **Error**: Tool not available (e.g., phpstan or sonar not installed).
+   **Solution**: Skip that tool; note the gap in metadata; suggest installing or running it via Docker.
 7. **Error**: Global config not found at `~/.ai/review.yml`.
-   **Solution**: Review proceeds using only project config. Create `~/.ai/review.yml` to set cross-project defaults for tools, MCPs, and extra skills.
-
+   **Solution**: Review proceeds using only project config.
 8. **Error**: MCP tool call fails or server is not available.
    **Solution**: Skip the MCP action; append a note to the review output. The review report is complete without post-review actions.
-
 9. **Error**: Discovered skill has no readable SKILL.md or no lens definitions.
    **Solution**: Skip that skill silently.
-
-## Examples
-
-### Example 1: Auto — Review Open Changes
-
-**User**: "Review my changes" / "Review my open changes"
-
-```bash
-bash {baseDir}/scripts/detect-surface.sh   # auto-detects: staged → unstaged → branch ahead → last commit
-# then run the printed command, e.g.: git diff --staged
-```
-
-### Example 2: Branch — Review Against a Target
-
-**User**: "Review against develop" / "Review before merging to main"
-
-```bash
-bash {baseDir}/scripts/detect-surface.sh --branch develop
-# then run: git diff develop...HEAD
-```
-
-### Example 3: PR Mode — Full Branch Review
-
-**User**: "Review this PR" / "Review before merging"
-
-```bash
-bash {baseDir}/scripts/detect-surface.sh --pr
-# auto-detects base (main/master/develop), then: git diff main...HEAD
-```
-
-### Example 4: Last N Commits
-
-**User**: "Review the last 3 commits"
-
-```bash
-bash {baseDir}/scripts/detect-surface.sh --commits 3
-# then run: git diff HEAD~3..HEAD
-```
-
-### Example 5: Staged Only
-
-**User**: "Review what I've staged so far"
-
-```bash
-bash {baseDir}/scripts/detect-surface.sh --staged
-# then run: git diff --staged
-```
-
-### Example 6: Review With Tests and Linters
-
-**User**: "Review my changes and run the tests and linters"
-
-1. Detect surface with `detect-surface.sh`.
-2. Run `bash {baseDir}/scripts/run-tests.sh`.
-3. Run `bash {baseDir}/scripts/run-linters.sh`.
-4. Integrate tool output as findings before reporting.
-
-### Example 7: Configure the Review Workflow
-
-**User**: "Set up review config for my Laravel project with PHPStan and Pest"
-
-1. Read `{baseDir}/references/config-guide.md`.
-2. Create `.ai/review.yml` with the PHP/Laravel preset.
-3. Confirm the config and explain each section.
-
-### Example 8: Review With MCP Issue Creation
-
-**User**: "Review this PR and create GitHub issues for P0 findings"
-
-1. Load config (global + project merged via `load-config.sh --global ~/.ai/review.yml`).
-2. Detect surface with `detect-surface.sh --pr`.
-3. Run specialist passes and reflection (Steps 4–6).
-4. Format and deliver the review report (Step 7).
-5. For each P0 finding, offer to call `mcp__github__create_issue` with title, file+line, risk, and fix. Confirm before posting unless `auto_post: true`.
 
 ## Resources
 
 - **Output format + examples**: `{baseDir}/references/output-format.md`
-- **Security lens checklist**: `{baseDir}/references/lens-security.md`
-- **A11y lens checklist**: `{baseDir}/references/lens-a11y.md`
-- **Specialist lens details**: `{baseDir}/references/review-system.md`
+- **Security lens**: `{baseDir}/references/lens-security.md`
+- **Data & migrations lens**: `{baseDir}/references/lens-data.md`
+- **Correctness & concurrency lens**: `{baseDir}/references/lens-correctness.md`
+- **Performance lens**: `{baseDir}/references/lens-performance.md`
+- **Architecture lens**: `{baseDir}/references/lens-architecture.md`
+- **Accessibility lens**: `{baseDir}/references/lens-a11y.md`
+- **Specialist lens details & prompts**: `{baseDir}/references/review-system.md`
 - **Config reference**: `{baseDir}/references/config-guide.md`
-- **Memory format**: `{baseDir}/references/memory-guide.md`
-- **Tools integration**: `{baseDir}/references/tools-guide.md`
+- **Migration & Upgrade guide**: `{baseDir}/references/migration-guide.md`
+- **Memory guide (Add, Edit, Remove, Compact)**: `{baseDir}/references/memory-guide.md`
+- **Tools & SonarQube guide**: `{baseDir}/references/tools-guide.md`
 
 ## Version History
 
+- **v1.5.0** (2026-11-05): Breaking Change: Standardized Tool Specification (`tools.<name>` with `commands`, `env`, `parameters`). Removed legacy flat `test_command` and `static_analysis` shortcuts. Added full Migration Guide.
+- **v1.4.1** (2026-11-05): Added SonarQube/SonarCloud Docker & CLI integration, full memory lifecycle management (edit, remove, stats, compact), and memory bloat prevention.
+- **v1.4.0** (2026-11-05): Added dedicated lenses for Data, Correctness, Performance, and Architecture. Added Python & Go presets and security checklists. Fixed macOS Bash 3.2 compatibility, ESLint Flat Config, and untracked file detection. Added diff context protection and exact line verification.
 - **v1.3.0** (2026-06-02): Global config (`~/.ai/review.yml`), MCP post-review actions (Step 7b), peer skill discovery (Step 1), `extra_bash`/`mcps`/`extra_skills` config fields
 - **v1.2.0** (2026-06-02): Surface detection modes (auto, branch, PR, commits, staged)
 - **v1.1.0** (2026-06-02): Specialist passes (Security, A11y), Reflection/Critic step, structured output format

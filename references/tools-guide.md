@@ -6,26 +6,33 @@ Configure and activate automated tools alongside code review to increase finding
 
 Tools activate when:
 
-1. The user explicitly asks ("review and run tests", "check with linters", "run phpstan")
+1. The user explicitly asks ("review and run tests", "check with linters", "run phpstan", "run sonar")
 2. `review.tools.test_command` is set in `.ai/review.yml`
 3. A configured static analyzer is installed and the diff is relevant
-4. High-confidence validation is available for the changed code (e.g., changed SQL, changed auth logic)
+4. `review.tools.sonar` is configured and enabled in `.ai/review.yml`
+5. High-confidence validation is available for the changed code (e.g., changed SQL, changed auth logic)
 
 Expensive, stateful, or potentially destructive commands require explicit user request.
 
 ## Bundled Scripts
 
-Two scripts auto-detect the stack and run the right tools:
+Scripts auto-detect the stack and run the right tools:
 
 ```bash
 # Detect and run tests
 bash {baseDir}/scripts/run-tests.sh
 
-# Detect and run linters / static analysis
+# Detect and run linters / static analysis (scans project or filtered files)
 bash {baseDir}/scripts/run-linters.sh
+
+# Run linters targeted to specific changed files
+bash {baseDir}/scripts/run-linters.sh --files "src/auth/service.ts,src/auth/dto.ts"
 
 # Run tests filtered to a pattern
 bash {baseDir}/scripts/run-tests.sh --filter "TestClassName"
+
+# Run SonarQube with diff-scoping (drops pre-existing debt outside review diff)
+bash {baseDir}/scripts/run-sonar.sh
 ```
 
 ## Test Frameworks
@@ -33,7 +40,7 @@ bash {baseDir}/scripts/run-tests.sh --filter "TestClassName"
 ### JavaScript / TypeScript
 
 ```bash
-# Jest / Vitest (via npm scripts)
+# Jest / Vitest (via npm, pnpm, yarn, or bun scripts)
 npm test
 npm test -- --testPathPattern="src/auth"
 
@@ -89,139 +96,237 @@ pytest --cov=src tests/
 ### ESLint (JavaScript / TypeScript)
 
 ```bash
+# Flat config (ESLint v9+)
 npx eslint src/
+npx eslint changed-file.ts
+
+# Legacy config (.eslintrc.*)
 npx eslint --ext .ts,.tsx src/
-npx eslint changed-file.ts --format=compact
 ```
 
-Configure in `eslint.config.js` or `.eslintrc.cjs`.
+Configure in `eslint.config.js`, `eslint.config.mjs`, or legacy `.eslintrc.cjs`.
 
 ### PHPStan (PHP)
 
 ```bash
-./vendor/bin/phpstan analyse --level=max src/
-./vendor/bin/phpstan analyse --no-progress --error-format=table
+./vendor/bin/phpstan analyse --level=8 src/
+./vendor/bin/phpstan analyse --error-format=table src/
 ```
 
-Level guide: 0 = loose, 9 = strictest. Level 5+ recommended for new projects.
+Configure in `phpstan.neon` or `phpstan.neon.dist`.
 
 ### Psalm (PHP)
 
 ```bash
 ./vendor/bin/psalm
 ./vendor/bin/psalm --show-info=true
-./vendor/bin/psalm --taint-analysis          # Security taint tracking
+./vendor/bin/psalm path/to/file.php
 ```
+
+Configure in `psalm.xml`.
 
 ### Cargo Clippy (Rust)
 
 ```bash
 cargo clippy -- -D warnings
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features
 ```
 
-### Go Vet + Staticcheck (Go)
+### Go Vet & Staticcheck (Go)
 
 ```bash
 go vet ./...
 staticcheck ./...
 ```
 
-### Semgrep (multi-language — security focus)
+### Ruff (Python)
 
 ```bash
-semgrep --config auto .
-semgrep --config p/security-audit .
-semgrep --config p/owasp-top-ten .
-semgrep --config p/php .
-semgrep --config p/typescript .
+ruff check .
+ruff check --fix .
+ruff check path/to/file.py
 ```
 
-### Mypy / Ruff (Python)
+### Mypy (Python)
 
 ```bash
 mypy src/
-ruff check .
-ruff check --select=S .                      # Security rules only
+mypy --strict src/
 ```
 
-## Git Operations Used During Review
+### Semgrep (Multi-language Security)
 
 ```bash
-# Identify the diff surface
-git status --short
-git diff --staged
-git diff main...HEAD
-git diff --name-only main...HEAD             # Changed files only
-
-# Inspect history
-git log --oneline -20
-git log --follow -p -- src/auth/service.ts  # Full history for a file
-git blame src/auth/service.ts
-
-# Find affected test files
-git diff --name-only main...HEAD | grep -E "(spec|test)\.(ts|php|go|rs|py)$"
-
-# Show a specific commit
-git show <sha>
-git show <sha> --stat
+semgrep --config auto .
+semgrep --config "p/security-audit" --config "p/owasp-top-ten" .
+semgrep --config auto path/to/changed-file.py
 ```
 
-## Inline Search (ripgrep)
+Runs offline; fast; catches common CVE patterns and OWASP Top 10 vulnerabilities.
 
-```bash
-# Find all callers of a changed function
-rg "functionName" --type ts
+---
 
-# Find usages across languages
-rg "ClassName" -l                            # List files only
+## SonarQube & SonarCloud Integration
 
-# Find security-sensitive patterns
-rg "eval\(" --type js
-rg "query\(" -A 2 --type php                # Query calls + 2 lines of context
+SonarQube and SonarCloud provide enterprise-grade static analysis covering code quality, maintainability, test coverage, and security vulnerabilities across 30+ programming languages.
 
-# Find tests related to a changed module
-rg "AuthService" --type ts -l | grep -i spec
-```
+### 1. The Community Edition Challenge: Why `diff_scoped: true` is Critical
 
-## Integrating Tool Output Into Findings
+- **Community Edition limitation**: SonarQube Community Edition does not support branch or PR analysis (`sonar.branch.*` and `sonar.pullrequest.*` are gated behind paid Developer Edition licenses).
+- **The False-Positive Trap**: The local scan runs across the entire workspace filesystem (including uncommitted, staged, and untracked files). The server evaluates "New Code" against a fixed server-side leak period (e.g. 30 days or version bump), **NOT** the specific commits or working tree diff under review.
+- **The Solution**: With `diff_scoped: true` in `.ai/review.yml` (executed via `scripts/run-sonar.sh`):
+  1. The script triggers your scan (`make sonar-scan` or `sonar-scanner`).
+  2. It queries open issues from the Sonar REST API:
+     ```bash
+     curl -s -u "$SONAR_TOKEN:" "http://localhost:9000/api/issues/search?componentKeys=MY_PROJECT&resolved=false&ps=500"
+     ```
+  3. It extracts each issue's `component` (file path) and `line`.
+  4. It intersects those issues with the exact files and lines touched by the review's `git diff` (from Step 2).
+  5. **Result**: Only issues introduced or modified in the current diff are reported. All pre-existing legacy issues outside the diff are dropped as existing technical debt.
 
-When a tool produces output:
-
-1. **Map each finding to the diff** — is this line in the changed code or pre-existing?
-2. **Verify actionability** — is it a real issue, a false positive, or a known exception (see memory)?
-3. **Merge with lens findings** — one issue produces one finding even if multiple tools catch it.
-4. **Label the source** — e.g., `[eslint]`, `[phpstan]`, `[cargo clippy]`, `[semgrep]`.
-5. **Set severity from impact**, not from tool severity level.
-
-Do **not** report pre-existing violations unless the diff makes them worse or directly caused them.
-
-## Checking Tool Availability Before Running
-
-```bash
-# Safe pattern: check before running
-command -v semgrep && semgrep --config auto . || echo "semgrep not installed"
-
-# For project-local tools
-[ -f vendor/bin/phpstan ] && ./vendor/bin/phpstan analyse src/ || echo "phpstan not available"
-[ -f node_modules/.bin/eslint ] && npx eslint src/ || echo "eslint not available"
-```
-
-## Config Integration
-
-Test command and static analysis tools can be specified in `.ai/review.yml`:
+### 2. Configuration in `.ai/review.yml`
 
 ```yaml
 review:
   tools:
-    test_command: "./vendor/bin/pest --parallel"
+    test_command: "make test"
     static_analysis:
-      - phpstan
-      - psalm
-      - semgrep
+      - ruff
+      - mypy
+
+    # ── Standardized Tool Specification (e.g. SonarQube) ─────────────────────
+    sonar:
+      enabled: true
+      commands:
+        up: "make sonar-up"                # Provision/start containers if needed (optional)
+        run: "make sonar-scan"             # Primary analysis command (required)
+        down: "make sonar-down"            # Teardown services after review (optional)
+        health: "curl -f http://localhost:9000/api/system/status" # Readiness check before run (optional)
+      env:
+        SONAR_HOST_URL: "http://localhost:9000"
+        SONAR_TOKEN: "${SONAR_TOKEN}"      # Read from environment or local .env
+      parameters:
+        project: "GIA---IEBT"              # Target project key
+        diff_scoped: true                  # Intersect issues with git diff lines (drops legacy debt)
 ```
 
-When `test_command` is set, the skill runs it automatically on reviews that touch tested code. When a test fails, it is included as a `P1` finding.
+### 3. Spinning up a Local SonarQube Instance (Docker)
+
+To run a lightweight local SonarQube server for local development:
+
+```bash
+# Start SonarQube Community Edition in the background
+docker run -d --name sonarqube -p 9000:9000 sonarqube:lts-community
+
+# Check logs to see when SonarQube is up (usually takes 30-60s)
+docker logs -f sonarqube
+```
+
+- Web UI opens at: `http://localhost:9000`
+- Default login: `admin` / `admin` (prompts for new password on first login)
+- Generate a user token at: `User Profile > Security > Generate Tokens` (e.g., `sqp_xxxxxxxxxxxx`).
+- Save the token to your local `.env` file: `SONAR_TOKEN=sqp_xxxxxxxxxxxx`.
+
+### 4. Project Configuration (`sonar-project.properties`)
+
+Create `sonar-project.properties` in your repository root:
+
+```properties
+# Project identification
+sonar.projectKey=MY_PROJECT_KEY
+sonar.projectName=My Project
+sonar.projectVersion=1.0
+
+# Paths
+sonar.sources=src
+sonar.tests=tests
+sonar.exclusions=**/node_modules/**,**/vendor/**,**/dist/**,**/*.spec.ts,**/coverage/**
+
+# SonarQube Server URL (or https://sonarcloud.io)
+sonar.host.url=http://localhost:9000
+
+# Wait for Quality Gate calculation so scanner exits non-zero if Gate fails
+sonar.qualitygate.wait=true
+
+# Source encoding
+sonar.sourceEncoding=UTF-8
+```
+
+### 5. Running the Analysis (Agent-Orchestrated via Standard Lifecycle)
+
+No custom runner script is required. The AI agent reads the standardized configuration from `.ai/review.yml` and orchestrates the steps directly:
+1. **Health Check**: Executes `commands.health` (e.g. `curl -f http://localhost:9000/api/system/status`). If unhealthy or offline, executes `commands.up` (e.g. `make sonar-up`) and awaits readiness.
+2. **Runs Scan**: Executes `commands.run` (e.g. `make sonar-scan`).
+3. **Pulls & Filters Issues**: Resolves `env.SONAR_TOKEN`, queries the Sonar API (`/api/issues/search`), and in-context filters findings to only those on lines touched in the review's `git diff` (if `parameters.diff_scoped: true`).
+4. **Applies Rubric**: Formats findings according to P0–P3 severity without manual intervention.
+
+### 6. Interpreting Sonar Findings in Code Reviews
+
+When reviewing code analyzed by Sonar, map its issue types and severities to the review rubric:
+
+| Sonar Issue Type & Severity | Review Impact | Action |
+|---|---|---|
+| **Blocker / Critical Bug** | **P0** or **P1** | Blocker: potential crash, data loss, or broken control flow. Require fix before merge. |
+| **Vulnerability (High/Critical)** | **P0** or **P1** | Security breach, SQLi, XSS, or hardcoded credential. Must be resolved. |
+| **Security Hotspot (To Review)** | **P1** | Human inspection required (e.g. crypto algorithm, CORS, file access). |
+| **Major Code Smell** | **P2** | Maintainability regression, high cyclomatic complexity, or memory inefficiency. |
+| **Minor / Info Code Smell** | **P3** or drop | Minor formatting, unused imports, or style nit. Drop if trivial. |
+| **Failed Quality Gate** | **REQUEST_CHANGES** | Review fails if coverage dropped below threshold or new blocker bugs were introduced. |
+
+---
+
+## Integration Rules
+
+### 1. Tools Inform, Humans Decide
+
+Do not blindly copy a linter or Sonar error into the review report.
+- Verify the line was changed in this diff (static analysis often reports on pre-existing code).
+- Assess whether it actually matters in context.
+- If it's a known false positive (check `.ai/review-memory.md`), discard it.
+- If it's a style nit with no functional impact, either drop it or place it at P3.
+
+### 2. Failure Severity Summary
+
+| Tool result | Review impact |
+|---|---|
+| Failing unit test on changed code | **P1** finding: "Test failure: [test name] fails on this change" |
+| PHPStan/Mypy type error on changed line | **P1** or **P2** depending on runtime risk |
+| Semgrep high-confidence security finding | **P0** or **P1** finding |
+| SonarQube Blocker Bug / Vulnerability | **P0** or **P1** finding |
+| ESLint unused variable | **P3** finding or drop if trivial |
+| Pre-existing tool error on untouched line | **Discard** — not introduced by this diff |
+
+### 3. Graceful Degradation
+
+If a tool is not installed or fails to run:
+- Do not fail the review.
+- Note the missing tool in the review output metadata: `Tools: sonar (not running/configured)`.
+- Suggest running it if relevant to the project stack.
+
+## Config Integration (Standardized v1.5.0 Format)
+
+Tools are declared in `.ai/review.yml` under `tools.<name>` with their commands and parameters:
+
+```yaml
+review:
+  tools:
+    test:
+      enabled: true
+      commands:
+        run: "./vendor/bin/pest --parallel"
+      parameters:
+        timeout: 300
+    phpstan:
+      enabled: true
+    psalm:
+      enabled: true
+    semgrep:
+      enabled: true
+```
+
+When `tools.test.enabled: true` and `commands.run` is defined, the skill runs it automatically on reviews that touch tested code. When a test fails, it is included as a `P1` finding.
+
+> See [`references/migration-guide.md`](migration-guide.md) for upgrading legacy configs.
 
 ## MCP Post-Review Actions
 
@@ -229,23 +334,29 @@ When `tools.mcps` is configured, the skill can perform post-review actions using
 
 ### Supported Actions
 
-| Action type | Trigger | MCP tool pattern |
+| Action type | Trigger | MCP tool action |
 |---|---|---|
-| `create_issue` | P0 findings + user confirmation | `mcp__<server>__create_issue` |
-| `create_ticket` | P0 findings + user confirmation | `mcp__<server>__create_ticket` |
-| `add_pr_comment` | After review output + user confirmation | `mcp__<server>__add_pr_comment` |
+| `create_issue` | P0 findings + user confirmation | Create issue/task on tracker |
+| `create_ticket` | P0 findings + user confirmation | Create ticket on issue tracker |
+| `add_pr_comment` | After review output + user confirmation | Post review markdown as comment |
 
 ### MCP Tool Name Resolution
 
-Tool names follow the `mcp__<server>__<action>` convention. Common examples:
+Tool names depend on the host agent environment:
 
-| Server | create issue | PR comment |
+- **Claude Code**: Uses double underscore format: `mcp__<server>__<action>` (e.g., `mcp__github__create_issue`, `mcp__github__add_pr_comment`, `mcp__jira__create_issue`).
+- **Antigravity / Universal MCP**: Uses single underscore format `mcp_<server>_<action>` (e.g., `mcp_github_create_issue`) or invokes registered tool directly by server name.
+
+Common examples:
+
+| Server | Claude Code pattern | Antigravity / Universal pattern |
 |---|---|---|
-| GitHub | `mcp__github__create_issue` | `mcp__github__add_pr_comment` |
-| Jira | `mcp__jira__create_issue` | — |
-| Linear | `mcp__linear__create_issue` | — |
+| GitHub | `mcp__github__create_issue` | `mcp_github_create_issue` |
+| GitHub PR Comment | `mcp__github__add_pr_comment` | `mcp_github_add_pr_comment` |
+| Jira | `mcp__jira__create_issue` | `mcp_jira_create_issue` |
+| Linear | `mcp__linear__create_issue` | `mcp_linear_create_issue` |
 
-If a tool name fails, try the `mcp__<server>__<server>_<action>` variant — some servers prefix the tool name with the server name.
+If a tool call fails or cannot be resolved, graceful degradation ensures the review report remains unaffected.
 
 ### Config
 

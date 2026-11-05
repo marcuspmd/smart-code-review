@@ -2,7 +2,7 @@
 
 Context-aware AI code review with persistent memory, configurable rules, specialist lenses, and automated tool integration.
 
-Works with: **PHP/Laravel**, **TypeScript/NestJS**, **Rust**, **Go**, **Python**, **Docker**, **CI**, **SQL migrations**, and more.
+Works with: **PHP/Laravel**, **TypeScript/NestJS**, **Python (FastAPI/Django)**, **Go**, **Rust**, **Docker**, **CI/CD**, **SQL migrations**, **SonarQube / SonarCloud**, and more.
 
 ## Install
 
@@ -32,12 +32,14 @@ review against main
 review the last 3 commits
 review what I staged
 run code review and tests
+review my changes and run sonarqube
 ```
 
 ### Slash command (explicit)
 
 ```
-/code-review-agent
+/smart-code-review
+# or legacy alias: /code-review-agent
 ```
 
 ---
@@ -48,7 +50,7 @@ The skill detects which surface to review based on your request:
 
 | What you say | What gets reviewed |
 |---|---|
-| `review my changes` | Auto: staged → unstaged → branch ahead of base → last commit |
+| `review my changes` | Auto: staged → unstaged → untracked → branch ahead of base → last commit |
 | `review against develop` | Diff of current branch vs `develop` |
 | `review against main` | Diff of current branch vs `main` |
 | `review this PR` / `review before merging` | Branch vs auto-detected base (main/master/develop) |
@@ -59,21 +61,67 @@ The skill detects which surface to review based on your request:
 
 ## What Happens During a Review
 
-1. **Loads config** from `.ai/review.yml` (if present)
-2. **Loads memory** from `.ai/review-memory.md` (if present)
-3. **Detects the surface** — which diff to review
-4. **Runs tools** — tests and linters if configured or requested
-5. **Applies specialist passes** independently:
-   - Security (always) — injection, authz, XSS, SSRF, secrets, crypto
-   - Correctness — contracts, edge cases, error handling
-   - Data — transactions, migrations, N+1, indexes
-   - Performance — unbounded loops, memory pressure, caching
-   - Architecture — DDD, layering, coupling
-   - Tests — coverage gaps, brittle assertions
-   - Operations — Docker, CI, env vars, deploy sequencing
-   - A11y (if frontend) — WCAG 2.1 AA: keyboard, ARIA, contrast, semantic HTML
-6. **Reflection pass** — challenges every finding: is it in the diff? concrete? severity accurate?
-7. **Formats output** — P0 → P3 findings with file+line, risk, fix, and `APPROVE / REQUEST_CHANGES / COMMENT`
+1. **Loads config** — merges global (`~/.ai/review.yml`) with project (`.ai/review.yml` or `.ai/review.yaml`).
+2. **Loads memory** from `.ai/review-memory.md` and repository guidelines from `.ai/review-rules.md` (if present).
+3. **Discovers peer skills** — reads other installed skills for checklist enrichment.
+4. **Detects the surface** — resolves exact git diff with lockfile exclusions to preserve context window.
+5. **Runs tools** — executes relevant linters (ESLint Flat/Legacy, Ruff, Mypy, PHPStan, Go Vet, Semgrep, SonarQube Scanner) and test suites when configured.
+6. **Applies specialist passes** independently:
+   - **Security** (`references/lens-security.md`) — auth, injection, XSS, SSRF, secrets, crypto
+   - **Data & Migrations** (`references/lens-data.md`) — locks, zero-downtime expand/contract, N+1, indexes
+   - **Correctness & Concurrency** (`references/lens-correctness.md`) — race conditions, deadlocks, error swallowing
+   - **Performance** (`references/lens-performance.md`) — unbounded loops, memory pressure, cache stampede
+   - **Architecture** (`references/lens-architecture.md`) — DDD boundaries, layering, coupling
+   - **Tests** — missing coverage for changed logic, assertion efficacy
+   - **Operations** — Docker image pinning, CI secrets, deployment ordering
+   - **A11y** (`references/lens-a11y.md`) — WCAG 2.1 AA: keyboard nav, ARIA, focus, contrast
+7. **Reflection / Critic pass** — verifies findings are in the diff, verifies exact line numbers in target files, deduplicates and adjusts severity.
+8. **Formats output** — P0 → P3 findings with file+line, risk, concrete fix, and `APPROVE / REQUEST_CHANGES / COMMENT`.
+9. **Optional MCP post-actions** — creates issues/tickets for P0 findings or posts review comments to GitHub/Jira/Linear.
+
+---
+
+## SonarQube & SonarCloud Integration
+
+Run enterprise-grade static analysis and quality gates locally or in CI:
+
+```bash
+# Run local SonarQube server via Docker
+docker run -d --name sonarqube -p 9000:9000 sonarqube:lts-community
+
+# Execute scan with sonar-scanner CLI, NPX, or Docker:
+sonar-scanner -Dsonar.token="YOUR_TOKEN"
+# or without installing scanner:
+docker run --rm --network="host" -v "${PWD}:/usr/src" sonarsource/sonar-scanner-cli
+```
+
+Findings map directly to review severity: Blocker/Critical Bugs → **P0/P1**, Security Hotspots → **P1**, Major Smells → **P2**.  
+See [`references/tools-guide.md`](references/tools-guide.md) for full setup instructions and `sonar-project.properties` template.
+
+---
+
+## Memory Management: Add, Edit, Remove & Compact
+
+Keep review memory clean, accurate, and bloat-free over time:
+
+```bash
+# Add a new rule or pattern
+bash scripts/manage-memory.sh --add --section "Architecture" --entry "Domain/ must not import from Infrastructure/"
+
+# Edit or replace an outdated rule
+bash scripts/manage-memory.sh --replace "old pattern" --with "new pattern"
+
+# Remove an obsolete or deleted convention
+bash scripts/manage-memory.sh --remove "old pattern"
+
+# Check stats (entry count per section)
+bash scripts/manage-memory.sh --stats
+
+# Compact and deduplicate entries
+bash scripts/manage-memory.sh --compact
+```
+
+See [`references/memory-guide.md`](references/memory-guide.md) for guidelines on when to prune and synthesize entries.
 
 ---
 
@@ -84,7 +132,7 @@ The skill detects which surface to review based on your request:
 Tune the review for your stack:
 
 ```yaml
-# TypeScript / NestJS
+# TypeScript / NestJS (Standardized Tools v1.5.0)
 review:
   language: typescript
   frameworks: [nestjs]
@@ -96,103 +144,86 @@ review:
     file: .ai/review-memory.md
     auto_update: false
   tools:
-    test_command: "npm test"
-    static_analysis: [eslint, semgrep]
+    test:
+      enabled: true
+      commands:
+        run: "npm test"
+    eslint:
+      enabled: true
+    semgrep:
+      enabled: true
   custom_rules:
     - "Use z.uuid() instead of deprecated z.string().uuid()."
     - "Inject dependencies via constructor, not service locator."
 ```
 
 ```yaml
-# PHP / Laravel
+# Python / FastAPI with Standardized Tools (Pytest, Ruff, SonarQube)
 review:
-  language: php
-  frameworks: [laravel]
+  language: python
+  frameworks: [fastapi]
+  priorities: [security, correctness, performance, data, architecture, tests]
+  always_check: [sql_injection, authorization, n_plus_one]
+  memory:
+    file: .ai/review-memory.md
+    auto_update: false
   tools:
-    test_command: "./vendor/bin/pest"
-    static_analysis: [phpstan, psalm]
+    static_analysis: [ruff, mypy]
+    sonar:
+      enabled: true
+      commands:
+        up: "make sonar-up"
+        run: "make sonar-scan"
+        down: "make sonar-down"
+        health: "curl -f http://localhost:9000/api/system/status"
+      env:
+        SONAR_HOST_URL: "http://localhost:9000"
+        SONAR_TOKEN: "${SONAR_TOKEN}"
+      parameters:
+        project: "GIA---IEBT"
+        diff_scoped: true
+    test:
+      enabled: true
+      commands:
+        run: "make test"
+      parameters:
+        min_coverage: 80
   custom_rules:
-    - "Controllers must not contain business logic — use Action classes."
+    - "Async route handlers must never call blocking synchronous functions."
+    - "Always use timezone-aware datetimes (datetime.now(timezone.utc))."
 ```
 
-See [`references/config-guide.md`](references/config-guide.md) for all options and per-stack presets.
-
-### 2. Create `.ai/review-memory.md`
-
-Persist project-specific knowledge across reviews:
-
-```markdown
-# Review Memory
-
-## Architecture
-- DDD boundaries enforced: Domain/ must not import from Infrastructure/.
-
-## Recurring Issues
-- Missing eager loading on Order::items causes N+1 in reports.
-
-## Accepted Patterns
-- Migrations split into schema + backfill steps for zero-downtime deploys.
-
-## False Positives
-- PHPStan flags mixed types in generated DTO classes — acceptable.
-```
-
-Memory is read before every review. The skill proposes new entries when it finds recurring patterns, and writes them when you confirm (or automatically if `auto_update: true`).
-
-See [`references/memory-guide.md`](references/memory-guide.md) for format and management.
-
----
-
-## Output Format
-
-```
-## Code Review — feature/auth-refactor
-
-**Stack**: TypeScript / NestJS
-**Scope**: 4 files changed, +187 / -23
-**Tools**: eslint (0 errors), npm test (47 passed)
-**Memory**: loaded (3 entries)
-
-### Summary
-...
-
-### Findings
-
-#### P1 — Refresh token exposed in error log
-**File**: `src/auth/auth.service.ts:94`
-**Risk**: Raw token logged in catch block — accessible to anyone with log access.
-**Fix**: Remove `token` from logger context: `this.logger.error('Refresh failed', { userId })`.
-
-### Recommendation
-REQUEST_CHANGES — P1 findings must be resolved before merge.
-```
-
-Severity scale: `P0` (merge blocker) → `P1` (likely bug) → `P2` (architecture/test risk) → `P3` (low-risk improvement).
-
-See [`references/output-format.md`](references/output-format.md) for the full template and examples.
+See [`references/config-guide.md`](references/config-guide.md) for all options and presets (Go, Rust, Docker, PHP), and [`references/migration-guide.md`](references/migration-guide.md) for upgrading from v1.x configs.
 
 ---
 
 ## File Structure
 
 ```
-code-review-agent/
+smart-code-review/
 ├── SKILL.md
 ├── README.md
 ├── scripts/
-│   ├── detect-surface.sh     # Detect review surface (auto/branch/PR/commits/staged)
-│   ├── load-config.sh        # Load .ai/review.yml
+│   ├── detect-surface.sh     # Detect review surface (auto/branch/PR/commits/staged/untracked)
+│   ├── discover-skills.sh    # Discover peer skills across project and global paths
+│   ├── load-config.sh        # Merge global (~/.ai) and project (.ai) review configs
 │   ├── read-memory.sh        # Read .ai/review-memory.md
-│   ├── write-memory.sh       # Append entries to memory sections
-│   ├── run-tests.sh          # Auto-detect and run tests
-│   └── run-linters.sh        # Auto-detect and run linters
+│   ├── write-memory.sh       # Add entries to memory (delegates to manage-memory.sh)
+│   ├── manage-memory.sh      # Full memory lifecycle: add, replace/edit, remove, stats, compact
+│   ├── run-tests.sh          # Auto-detect test runner (npm/pnpm/yarn/bun/pest/pytest/go/cargo)
+│   └── run-linters.sh        # Run linters (ESLint, Ruff, Mypy, PHPStan, Go Vet, Semgrep)
 └── references/
     ├── output-format.md      # Output template + examples
-    ├── lens-security.md      # Security pass checklist
+    ├── lens-security.md      # Security pass checklist (Python, Go, Rust, PHP, TS, SQL)
+    ├── lens-data.md          # Data, SQL & zero-downtime migrations checklist
+    ├── lens-correctness.md   # Correctness, concurrency & edge cases checklist
+    ├── lens-performance.md   # Performance, memory leaks & query optimization checklist
+    ├── lens-architecture.md  # Architecture, DDD & layering checklist
     ├── lens-a11y.md          # Accessibility pass checklist (WCAG 2.1 AA)
     ├── config-guide.md       # .ai/review.yml reference + per-stack presets
-    ├── memory-guide.md       # Memory format and management
-    ├── tools-guide.md        # Tool commands and integration rules
+    ├── migration-guide.md    # Upgrade and migration guide for v1.5.0 standardized tools
+    ├── memory-guide.md       # Memory lifecycle, quality, and compaction guide
+    ├── tools-guide.md        # Tools, SonarQube/SonarCloud Docker setup, and MCP rules
     └── review-system.md      # Specialist lens details and stack-specific prompts
 ```
 

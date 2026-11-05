@@ -2,6 +2,17 @@
 
 Apply to every diff that touches: auth, permissions, input/output, HTTP endpoints, file operations, crypto, sessions, or external integrations. When in doubt, run it.
 
+## Severity Guide
+
+| Severity | Impact | Examples |
+|---|---|---|
+| **P0** (Blocker) | Remote code execution (RCE), unauthenticated data breach, privilege escalation | SQL injection; arbitrary file upload; hardcoded production private key; missing authentication guard on admin route |
+| **P1** (Likely bug) | High-risk vulnerability under specific conditions, IDOR, SSRF | Object-level authorization bypass (IDOR); SSRF reaching private IP ranges; reflected XSS; mass assignment mutating permissions |
+| **P2** (Maintainability) | Defense-in-depth weakness, weak defaults, missing rate limit | Missing rate limit on password reset; weak password policy; wildcard CORS on semi-sensitive endpoint; verbose error traces in responses |
+| **P3** (Minor) | Minor hygiene, informational security improvement | Missing security headers (X-Frame-Options); token entropy slightly lower than recommended; outdated dependency without known exploit |
+
+---
+
 ## Authorization
 
 - Every endpoint that reads/writes data verifies the caller owns or has permission to **that specific resource** (object-level check, not just role-level).
@@ -55,9 +66,9 @@ Apply to every diff that touches: auth, permissions, input/output, HTTP endpoint
 ## Cryptography
 
 - Passwords hashed with bcrypt, argon2, or scrypt — never MD5, SHA1, SHA256, or unsalted hashes.
-- Random values for security purposes use CSPRNG (`crypto.randomBytes`, `random_bytes`) — not `Math.random()` or `rand()`.
+- Random values for security purposes use CSPRNG (`crypto.randomBytes`, `random_bytes`, `secrets` in Python, `crypto/rand` in Go) — not `Math.random()`, `rand()`, or `math/rand`.
 - Encryption uses authenticated modes (AES-GCM, ChaCha20-Poly1305) — not ECB or unauthenticated CBC.
-- TLS: new HTTP clients do not disable certificate verification (`verify: false`, `rejectUnauthorized: false`).
+- TLS: new HTTP clients do not disable certificate verification (`verify: false`, `rejectUnauthorized: false`, `InsecureSkipVerify: true`).
 
 ## Rate Limiting and DoS
 
@@ -78,7 +89,32 @@ Apply to every diff that touches: auth, permissions, input/output, HTTP endpoint
 - Error responses in production return generic messages — stack traces are suppressed.
 - PII is not logged unless explicitly required and compliant with the project's data retention policy.
 
+---
+
 ## Stack-Specific Checks
+
+### Python (Django, FastAPI, Flask)
+- `pickle.loads()` on untrusted data → arbitrary code execution (RCE).
+- `subprocess.run(..., shell=True)` with formatted strings → command injection.
+- SQLAlchemy `text("SELECT ... " + user_var)` or Django `extra(where=[...])` / `raw()` → SQL injection.
+- `yaml.load(stream)` without `Loader=yaml.SafeLoader` → arbitrary Python object instantiation.
+- `eval()`, `exec()`, or `compile()` with user-controlled input → arbitrary code execution.
+- Jinja2 templates initialized with `autoescape=False` → cross-site scripting (XSS).
+- Pydantic models accepting arbitrary kwargs or unbounded string lengths without validation constraints.
+
+### Go
+- `fmt.Sprintf` in SQL queries passed to `db.Query` or `db.Exec` → SQL injection.
+- `exec.Command("sh", "-c", userCmd)` → command injection; use explicit arg slices without shell.
+- SSRF: using `http.Get(userURL)` without verifying the resolved IP is not a private/loopback/link-local address.
+- `archive/zip` or `archive/tar` extraction without checking for `..` (Zip Slip path traversal).
+- Concurrency data races on shared maps or slices without read-write mutex locks (`sync.RWMutex`).
+- `tls.Config{InsecureSkipVerify: true}` committed in non-test code.
+
+### Rust
+- Unsound `unsafe` blocks: dereferencing raw pointers without bounds/lifetime guarantees.
+- `std::mem::transmute` across types of mismatched size or alignment.
+- Executing shell commands with `std::process::Command::new("sh")` and unescaped input.
+- Deserializing untrusted binaries or untrusted serde types without depth/size limits (DoS).
 
 ### PHP / Laravel
 - `DB::statement()` or `DB::select()` with string interpolation → SQL injection.

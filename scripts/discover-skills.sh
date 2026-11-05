@@ -3,11 +3,13 @@
 # The agent reads each discovered SKILL.md for lens enrichment — it does NOT invoke them.
 # Usage: bash discover-skills.sh [--extra-paths <path1,path2,...>]
 #
+# Compatible with POSIX / Bash 3.2+ (macOS default) and Bash 4+.
+#
 # Discovery order:
-#   1. .agents/skills/*/SKILL.md        (project-level)
-#   2. ~/.claude/skills/*/SKILL.md      (global installs, SKILL.md variant)
-#   3. ~/.claude/skills/*/skill.md      (global installs, skill.md lowercase variant)
-#   4. Paths from --extra-paths         (from tools.extra_skills in config)
+#   1. Project-level skills: .agents/skills, .agent/skills, .skills
+#   2. Global installs:
+#      ~/.claude/skills, ~/.gemini/config/skills, ~/.config/skills, ~/.cursor/skills
+#   3. Paths from --extra-paths (from tools.extra_skills in config)
 
 ROOT="${PWD}"
 EXTRA_PATHS=""
@@ -23,7 +25,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 FOUND=0
-declare -A SEEN_DIRS
+# Delimited string for deduplication (compatible with Bash 3.2 on macOS)
+SEEN_DIRS=":"
 
 is_self() {
   local name="$1"
@@ -33,6 +36,16 @@ is_self() {
   return 1
 }
 
+is_seen() {
+  local dir="$1"
+  [[ "$SEEN_DIRS" == *":$dir:"* ]]
+}
+
+mark_seen() {
+  local dir="$1"
+  SEEN_DIRS="${SEEN_DIRS}${dir}:"
+}
+
 emit_skill() {
   local skill_dir="$1"
   local skill_file="$2"
@@ -40,9 +53,13 @@ emit_skill() {
   local skill_name
   skill_name=$(basename "$skill_dir")
   is_self "$skill_name" && return
-  # Deduplicate by directory
-  [ "${SEEN_DIRS[$skill_dir]+isset}" ] && return
-  SEEN_DIRS["$skill_dir"]=1
+  
+  # Deduplicate by directory path
+  if is_seen "$skill_dir"; then
+    return
+  fi
+  mark_seen "$skill_dir"
+
   [ -n "$label" ] && echo "# skill: $skill_name ($label)" || echo "# skill: $skill_name"
   echo "# path:  $skill_file"
   FOUND=1
@@ -65,12 +82,22 @@ discover_in_dir() {
 }
 
 # 1. Project-level skills
-discover_in_dir "$ROOT/.agents/skills" "SKILL.md"
+for p_dir in "$ROOT/.agents/skills" "$ROOT/.agent/skills" "$ROOT/.skills"; do
+  discover_in_dir "$p_dir" "SKILL.md"
+  discover_in_dir "$p_dir" "skill.md"
+done
 
-# 2 & 3. Global installs — check each dir once, prefer SKILL.md over skill.md
-global_dir="$HOME/.claude/skills"
-if [ -d "$global_dir" ]; then
-  for skill_dir in "$global_dir"/*/; do
+# 2. Global installs — check each directory once, prefer SKILL.md over skill.md
+GLOBAL_SKILL_DIRS=(
+  "$HOME/.claude/skills"
+  "$HOME/.gemini/config/skills"
+  "$HOME/.config/skills"
+  "$HOME/.cursor/skills"
+)
+
+for g_dir in "${GLOBAL_SKILL_DIRS[@]}"; do
+  [ -d "$g_dir" ] || continue
+  for skill_dir in "$g_dir"/*/; do
     [ -d "$skill_dir" ] || continue
     if [ -f "${skill_dir}SKILL.md" ]; then
       emit_skill "$skill_dir" "${skill_dir}SKILL.md"
@@ -78,9 +105,9 @@ if [ -d "$global_dir" ]; then
       emit_skill "$skill_dir" "${skill_dir}skill.md"
     fi
   done
-fi
+done
 
-# 4. Explicit extra paths from tools.extra_skills in config
+# 3. Explicit extra paths from tools.extra_skills in config
 if [ -n "$EXTRA_PATHS" ]; then
   IFS=',' read -ra PATHS <<< "$EXTRA_PATHS"
   for p in "${PATHS[@]}"; do
