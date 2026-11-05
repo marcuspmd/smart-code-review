@@ -187,6 +187,7 @@ Run each pass relevant to the review profile. Collect findings independently per
   Read `{baseDir}/references/lens-performance.md` and check for unbounded queries, memory leaks, and blocking I/O.
 - **Architecture Pass** — run on module additions, refactors, domain logic, and interface changes:
   Read `{baseDir}/references/lens-architecture.md` and check for DDD/layer violations, coupling, and circular dependencies.
+  Apply `{baseDir}/references/lens-design-patterns.md` to spot missed design patterns (Strategy/State vs huge switch/case, Builder for complex objects, Adapter for 3rd-party SDKs).
   *Plan Alignment Check*: If an implementation plan exists (`.claude/plans/*.md`, `plans/*.md`, `docs/plans/*.md`), check if the code adheres to the approved scope or introduced unauthorized scope creep / unapproved R2-R3 artifacts.
 - **Tests Pass** — missing tests for changed behavior, assertions that don't actually test the change, brittle fixtures.
 - **Operations Pass** — Docker image pinning, secrets in CI, env var gaps, health checks, deploy sequencing.

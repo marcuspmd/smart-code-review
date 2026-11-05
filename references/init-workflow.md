@@ -67,3 +67,4 @@ bash scripts/install-hooks.sh
 
 Conclude with a brief summary:
 > *"Setup complete! Your project review profile is active. Whenever you make changes, simply say `review my changes`, `review this PR`, or use `/smart-code-review`."*
+
