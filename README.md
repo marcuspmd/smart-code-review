@@ -70,14 +70,14 @@ bash scripts/install-hooks.sh
 
 The skill detects which surface to review based on your request:
 
-| What you say | What gets reviewed |
-|---|---|
-| `review my changes` | Auto: staged → unstaged → untracked → branch ahead of base → last commit |
-| `review against develop` | Diff of current branch vs `develop` |
-| `review against main` | Diff of current branch vs `main` |
-| `review this PR` / `review before merging` | Branch vs auto-detected base (main/master/develop) |
-| `review the last 3 commits` | Last 3 commits on current branch |
-| `review what I staged` | Staged changes only |
+| What you say                               | What gets reviewed                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| `review my changes`                        | Auto: staged → unstaged → untracked → branch ahead of base → last commit |
+| `review against develop`                   | Diff of current branch vs `develop`                                      |
+| `review against main`                      | Diff of current branch vs `main`                                         |
+| `review this PR` / `review before merging` | Branch vs auto-detected base (main/master/develop)                       |
+| `review the last 3 commits`                | Last 3 commits on current branch                                         |
+| `review what I staged`                     | Staged changes only                                                      |
 
 ---
 
