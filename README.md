@@ -41,7 +41,10 @@ install review hooks
 
 ```
 /smart-code-review
-# or legacy alias: /code-review-agent
+/smart-code-review init
+# or legacy alias:
+/code-review-agent
+/code-review-agent init
 ```
 
 ---

@@ -29,14 +29,14 @@ Responds in the user's language unless repository conventions require otherwise.
 | "review the last 3 commits" | Last N commits on current branch |
 | "review what I staged" | Staged changes only |
 | "review and run tests" / "review and run linters" / "run sonar" | Auto surface + tool execution |
-| "init review" / "setup review config" | Interactive configuration & memory setup (`init.sh`) |
+| "/smart-code-review init" / "init review" | Intelligent agent-guided setup (surveys repo, detects linters/tests, writes tailored configs) |
 | "install review hooks" / "setup git hooks" | Installs git pre-commit & pre-push hooks (`install-hooks.sh`) |
 | "save this to memory" / "add rule to review memory" | Memory addition (`manage-memory.sh --add`) |
 | "remove rule from memory" / "forget rule about X" | Memory removal (`manage-memory.sh --remove`) |
 | "update memory rule X with Y" | Memory edit/replacement (`manage-memory.sh --replace`) |
 | "compact review memory" / "clean up memory" | Memory pruning & deduplication (`manage-memory.sh --compact`) |
 
-**Slash commands**: `/smart-code-review` or `/code-review-agent`
+**Slash commands**: `/smart-code-review` (or `/code-review-agent`), `/smart-code-review init`
 
 ## Prerequisites
 
@@ -259,20 +259,19 @@ fi
 
 ---
 
-## Setup & Initialization Mode
+## Setup & Initialization Mode (`/smart-code-review init`)
 
-When the user says *"init review"*, *"configure smart-code-review"*, or *"setup review for this project"*:
+When triggered via `/smart-code-review init` or requests like *"init review"*, *"configure smart-code-review"*, the agent executes the **Intelligent Initialization Protocol** (detailed in `{baseDir}/references/init-workflow.md`):
 
-1. Run the interactive initialization wizard or prompt the user directly:
-```bash
-bash {baseDir}/scripts/init.sh
-```
-2. Guide the user through project review settings:
-   - **Detected Stack**: Auto-detects package managers (Composer, NPM, Cargo, Go, Pip/Poetry, Docker) and configures linters/tests accordingly.
-   - **Language**: Choose output language (`pt-BR`, `en`, `es`).
-   - **SonarQube / SonarCloud**: Ask if Sonar analysis is used in the project.
-   - **Memory Auto-Update**: Decide whether recurring patterns are automatically proposed for memory.
-   - **Git Hooks**: Offer installing `pre-commit` and `pre-push` review hooks via `bash {baseDir}/scripts/install-hooks.sh`.
+1. **Step 1: Codebase Survey**: Inspect project root (`composer.json`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Dockerfile`, CI files) to detect language, frameworks, test runners, and static linters (PHPStan, ESLint, Ruff, Mypy, Go Vet).
+2. **Step 2: Contextual Interview**: Present the detected stack in chat and ask up to 3 targeted calibration questions (Report Language, Test & Linter commands, SonarQube usage, and Git hooks).
+3. **Step 3: Generate Intelligent Files**:
+   - Write `.ai/review.yml` tailored with the project's actual test and lint commands.
+   - Write `.ai/review-rules.md` with stack-specific code quality and architecture constraints.
+   - Write `.ai/review-memory.md` seeded with detected conventions and recurring patterns.
+4. **Step 4: Install Git Hooks**: Offer to run `bash {baseDir}/scripts/install-hooks.sh` to install pre-commit and pre-push hooks.
+
+*(For automated / headless environments, `bash {baseDir}/scripts/init.sh --defaults` can be invoked directly).*
 
 ## Memory Lifecycle & Management
 

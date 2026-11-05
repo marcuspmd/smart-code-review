@@ -246,3 +246,4 @@ echo "   Config: $CONFIG_FILE"
 [ -n "$RULES_FILE" ]  && echo "   Rules:  $RULES_FILE"
 echo ""
 echo "Try running: review my changes"
+

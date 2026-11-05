@@ -92,3 +92,4 @@ fi
 
 chmod +x "$HOOKS_DIR"/*
 echo " Git hooks installed successfully!"
+
